@@ -159,7 +159,7 @@ El tiempo disponible para la kata es de un día. Elasticsearch aumenta la cantid
 | Cola de procesamiento | Redis + BullMQ | Trabajos asíncronos de extracción e indexación; no administra la subida desde el navegador. |
 | Tiempo real | Server-Sent Events (SSE) | Notificaciones del backend al frontend cuando cambia el estado de un documento. |
 | Entorno local | Docker Compose | Levantar API, trabajador, PostgreSQL, Elasticsearch y Redis para desarrollo y demostración. |
-| Almacenamiento de binarios | Volumen local de Docker para la kata | Conservar los originales fuera de Redis y PostgreSQL. Mantener una interfaz de almacenamiento que permita migrar a almacenamiento de objetos en producción. |
+| Almacenamiento de binarios | Volumen Docker local para la kata; Cloudflare R2 para entornos desplegados | Conservar originales y contenido normalizado fuera de Redis/PostgreSQL, mediante una interfaz de almacenamiento compatible con local y R2. |
 
 ### Reglas de integración
 
@@ -185,7 +185,7 @@ Antes de fijar límites de producción, recoger o acordar estos datos:
 | Tiempo de subida y timeout | Experiencia de usuario y conexiones ocupadas | El cliente debe poder subir archivos grandes sin bloquear la indexación; acordar timeouts en cada capa. |
 | Formatos y complejidad del contenido | CPU y memoria de extracción | Aceptar TXT UTF-8, Markdown UTF-8 y PDF con texto extraíble; OCR queda fuera del alcance inicial. PDF ilegible, protegido, corrupto o sin texto útil termina en `ERROR` con causa clara. |
 | Tamaño de texto extraído | Tamaño de índice y duración de indexación | Limitar páginas, caracteres o bytes extraídos por archivo para proteger el servicio. |
-| Almacenamiento y retención | Espacio, copias de seguridad y borrado | La kata conserva el original en un volumen local; definir política de retención y migración a almacenamiento de objetos para producción. |
+| Almacenamiento y retención | Espacio, copias de seguridad y borrado | Originales y texto normalizado se guardan fuera de PostgreSQL/Redis: volumen local para la kata y Cloudflare R2 en entornos desplegados; definir retención y versionado. |
 | Idempotencia y reintentos | Evita duplicados tras fallos de red o reenvíos | Usar una clave/identificador de operación y definir cuándo una repetición crea o reutiliza el documento. |
 | Seguridad | Riesgo de archivos maliciosos y exposición de datos | Validar extensión y tipo real, nombres, permisos, límites, y proteger el almacenamiento y la descarga. |
 | Observabilidad | Permite saber si los límites son adecuados | Medir tasas, tamaño, concurrencia, tiempo de subida, espera en cola, extracción, indexación y errores. |
@@ -195,7 +195,7 @@ Antes de fijar límites de producción, recoger o acordar estos datos:
 - La cantidad de archivos por lote tendrá un máximo configurable; todavía no se fija el valor. La interfaz debe validar el límite e informar si se excede.
 - El frontend sube los archivos de forma secuencial dentro del lote. El siguiente empieza solo después de recibir la confirmación del backend para el archivo anterior.
 - No se ha acordado un límite de tamaño individual ni de volumen total. Esos valores deben medirse y configurarse según el entorno; no inventar cifras como requisito.
-- Aunque no exista un tope funcional de cantidad, la interfaz debe comunicar progreso y errores por archivo y evitar que la cola consuma memoria sin control. La carga de binarios se hace bajo demanda, no leyendo todos los archivos completos a memoria.
+- La interfaz valida el máximo configurable de archivos por lote, comunica progreso/errores por archivo y evita consumir memoria sin control. Los binarios se transmiten bajo demanda, no se leen todos los archivos completos a memoria.
 - El backend mantiene controles de tamaño por archivo, validación durante streaming, almacenamiento disponible, tasa de entrada y procesamiento pendiente. Los límites operativos no cambian la regla de subida secuencial del frontend.
 - No ejecutar OCR en la primera versión; los PDF sin texto extraíble se marcan como `ERROR` con un motivo legible y no detienen el resto de la cola.
 
@@ -218,7 +218,7 @@ No se debe confirmar `RECEIVED` si el archivo o la tarea no quedaron guardados d
 - [ ] Definir valores iniciales configurables para cantidad máxima de archivos por lote, tamaño por archivo y concurrencia de workers con pruebas representativas.
 - [ ] Evaluar persistencia/reanudación de la cola del frontend si pasa a ser requisito; no está incluida en la primera versión.
 - [ ] Acordar si se impone una pausa o límite de tasa cuando el backend acumule demasiadas tareas pendientes.
-- [ ] Decidir si se conservará el archivo original además del texto indexado.
+- [ ] Definir política de retención/versionado y respaldo de originales y texto normalizado en almacenamiento local/R2.
 - [ ] Definir base y máximo del backoff, timeout por trabajo, política de pausa y recuperación de trabajos atascados; ya se fijó el máximo en 3 reintentos adicionales para fallos transitorios.
 - [ ] Definir ámbito de unicidad de `DUPLICATE_FILE` (por ejemplo, hash SHA-256 dentro de una organización) y si se permite importar el mismo contenido con metadatos/versiones diferentes.
 - [ ] Definir si la coordinación PostgreSQL-Redis requiere patrón outbox para el entorno de despliegue previsto.
@@ -262,7 +262,7 @@ No se debe confirmar `RECEIVED` si el archivo o la tarea no quedaron guardados d
 | 2026-10-27 | Mantener la subida secuencial en Angular y el procesamiento asíncrono en BullMQ con concurrencia independiente | Adoptada | La confirmación de recepción libera la subida siguiente; extracción e indexación pueden seguir en paralelo según capacidad del trabajador. |
 | 2026-10-27 | Usar PostgreSQL como fuente de verdad y Elasticsearch como índice reconstruible | Adoptada | Evita tratar el índice de búsqueda como registro canónico de metadatos y estados. |
 | 2026-10-27 | Seleccionar Elasticsearch como motor de búsqueda indexada | Adoptada | Sus funciones de texto completo, relevancia, filtros y resaltado se ajustan a la prueba; el volumen aún se medirá y PostgreSQL Full-Text Search queda como alternativa de menor complejidad. |
-| 2026-10-27 | Guardar archivos originales en un volumen local para la kata | Adoptada para desarrollo/demo | Mantiene binarios fuera de la cola Redis; para producción se prevé almacenamiento de objetos detrás de una interfaz intercambiable. |
+| 2026-10-27 | Guardar originales y texto normalizado en almacenamiento separado: volumen Docker local para la kata y Cloudflare R2 en entornos desplegados | Adoptada para la estrategia de escalabilidad | Mantener los binarios fuera de PostgreSQL/Redis, con claves/checksum en PostgreSQL y una abstracción para evitar acoplar la lógica al proveedor. |
 | 2026-10-27 | Mantener la cola pendiente de Angular en memoria del navegador en la primera versión | Adoptada para alcance inicial | Los archivos no enviados podrían perderse al cerrar/recargar la pestaña; documentos ya aceptados se recuperan por sus IDs y estado del backend. |
 | 2026-10-27 | Definir objetivos de búsqueda como p95 ≤ 400 ms para backend y p95 ≤ 1.000 ms extremo a extremo | Propuesta pendiente de validar con el evaluador | El PDF da un rango de 400 ms a 1 s, pero no especifica percentil, puntos de inicio/fin ni condiciones de carga. |
 | 2026-10-27 | Medir búsqueda por etapas y con carga/dataset reproducibles | Adoptada como criterio de verificación | Los presupuestos por etapa son hipótesis; el cumplimiento se determina con latencia total y condiciones publicadas. |

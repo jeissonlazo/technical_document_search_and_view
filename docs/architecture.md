@@ -16,7 +16,7 @@ Los estados persistidos del documento son `RECEIVED`, `PROCESSING`, `INDEXED` y 
 | Elasticsearch | Cubre texto completo sobre contenido y metadatos, relevancia ponderada, filtros, paginación y fragmentos resaltados. Se alinea directamente con los requisitos de búsqueda y evita consultas `LIKE`. | Añade un servicio que configurar, vigilar y reconciliar. El volumen máximo aún no se conoce y su capacidad deberá comprobarse con pruebas representativas. |
 | Redis + BullMQ | Mantiene trabajos asíncronos independientes, reintentos, backoff y concurrencia configurable para extracción e indexación. | Redis es una dependencia adicional y no reemplaza la cola secuencial de subida de Angular. Los trabajos deben ser idempotentes porque pueden reintentarse. |
 | SSE | El flujo requerido es principalmente unidireccional: el servidor notifica cambios de estado al navegador. Es apropiado para progreso sin polling; Angular usa HTTP para enviar cargas y búsquedas. | Una conexión SSE puede cortarse; la interfaz debe reconectar y consultar el estado persistido. El balanceador debe permitir conexiones HTTP de larga duración. |
-| Almacenamiento de objetos | Separa los binarios del modelo relacional y de Redis; el volumen Docker sirve para la kata, detrás de una interfaz que permita usar almacenamiento administrado en otro entorno. | El volumen local no ofrece por sí solo alta disponibilidad ni respaldo de producción. |
+| Almacenamiento de objetos | Separa los binarios del modelo relacional y de Redis; volumen Docker local para la kata y Cloudflare R2 como destino para entornos desplegados, detrás de una interfaz de almacenamiento. | El volumen local no ofrece por sí solo alta disponibilidad ni respaldo de producción; R2 no garantiza la disponibilidad de los demás servicios de la aplicación. |
 | Docker Compose | Permite levantar el conjunto de dependencias de forma reproducible en desarrollo y demostración. | Su uso queda limitado al entorno local; no determina la plataforma de producción. |
 
 La selección responde a los requisitos funcionales y a la prueba de un día, pero implica más infraestructura que una solución basada solo en PostgreSQL Full-Text Search. Para mantener el alcance, se limita la primera versión a un flujo de ingestión, un índice explícito, una búsqueda paginada y una interfaz SSE; no incluye OCR ni búsqueda semántica.
@@ -28,7 +28,7 @@ flowchart LR
     U[Usuario] -->|Selecciona lote| A[Angular: cola de subida secuencial]
     A -->|POST /api/documents: un archivo| API[NestJS API]
     API --> V[Validar formato, tamaño y metadatos]
-    V -->|Original| OS[(Almacenamiento de objetos<br/>volumen Docker en la kata)]
+    V -->|Original| OS[(Almacenamiento de objetos<br/>Docker local / R2 desplegado)]
     V -->|Registro + RECEIVED| PG[(PostgreSQL<br/>fuente de verdad)]
     API -->|Encolar ID del documento| R[(Redis + BullMQ)]
     API -->|202 Accepted + ID| A
@@ -56,10 +56,10 @@ flowchart LR
 1. Angular permite seleccionar un lote de tamaño variable. Mantiene una cola local y envía un solo archivo a la vez. El archivo siguiente no empieza a subirse hasta que el backend responde al anterior.
 2. Angular envía cada archivo y sus metadatos a `POST /api/documents` como `multipart/form-data`.
 3. NestJS valida autorización, formato real, tamaño, campos y metadatos. Se aceptan TXT UTF-8, Markdown UTF-8 y PDF con texto extraíble; no se hace OCR en esta versión.
-4. El backend conserva el original en almacenamiento durable. Para la kata se usa un volumen local de Docker detrás de una interfaz de almacenamiento; la misma interfaz permitirá usar almacenamiento de objetos administrado en otro entorno.
-5. PostgreSQL registra metadatos, referencia al objeto original y estado inicial `RECEIVED`. La solicitud devuelve `202 Accepted` con el ID del documento solo cuando archivo y trabajo quedaron aceptados de forma recuperable.
+4. El backend conserva el original en almacenamiento durable. Para la kata se usa un volumen local de Docker; en entornos desplegados se usa Cloudflare R2 mediante AWS SDK para JavaScript y endpoint compatible con S3, detrás de una interfaz de almacenamiento.
+5. PostgreSQL registra metadatos, clave de objeto estable, tamaño, MIME, checksum y estado inicial `RECEIVED`. La solicitud devuelve `202 Accepted` con el ID del documento solo cuando archivo y trabajo quedaron aceptados de forma recuperable.
 6. NestJS publica en BullMQ un trabajo que contiene el ID del documento y referencias necesarias, no los bytes del archivo. El estado pasa a `PROCESSING` mientras el trabajo espera o está activo. Si se implementa transactional outbox, el evento pendiente se escribe en PostgreSQL dentro de la misma transacción del registro; un dispatcher lo publica a Redis.
-7. El worker recupera el archivo, extrae y normaliza texto. Conserva el texto normalizado para que el visor pueda leer el documento y para permitir una reconstrucción del índice. El original se conserva según la política de retención.
+7. El worker recupera el archivo, extrae y normaliza texto, y guarda el texto con una clave de objeto estable para que el visor pueda leerlo y el índice pueda reconstruirse. El original se conserva según la política de retención.
 8. El worker envía a Elasticsearch una proyección con el texto indexable, título, metadatos, etiquetas, versión e identificador estable. El trabajo debe ser idempotente, usando el ID del documento como clave para que un reintento no duplique resultados.
 9. Una vez que Elasticsearch confirma la operación de indexación, el backend actualiza el registro PostgreSQL a `INDEXED`. Si ocurre un fallo definitivo o se agotan los reintentos, registra `ERROR` y un código/mensaje visible. Los errores transitorios pueden reintentarse según la política de BullMQ.
 10. El cambio de estado se publica como evento SSE. El error de un archivo solo afecta a ese documento; Angular muestra su resultado y continúa con el próximo elemento de la cola.
@@ -110,7 +110,7 @@ Concurrencia, tamaño máximo por archivo, tasa de entrada y capacidad de almace
 2. NestJS valida la solicitud y determina la identidad/permisos. Los filtros de acceso se incorporan a la consulta de Elasticsearch antes de devolver resultados.
 3. Elasticsearch busca sobre título, autor, categoría, etiquetas, versión y texto extraído normalizado. Se configura análisis lingüístico en español para campos de texto, campos exactos para filtros cuando aplique, relevancia ponderada y fragmentos resaltados. No se usan `LIKE` ni recorridos completos de tablas para buscar contenido.
 4. La API responde con resultados paginados, campos de resumen y fragmentos resaltados. La primera página propone un máximo de 20 resultados. Usar orden estable; evaluar `search_after` cuando el volumen o la profundidad de paginación lo amerite.
-5. Al seleccionar un resultado, Angular pide `GET /api/documents/:id`. NestJS obtiene metadatos/estado de PostgreSQL y el contenido original o normalizado del almacenamiento. La vista permite leer el documento sin descargarlo manualmente.
+5. Al seleccionar un resultado, Angular pide `GET /api/documents/:id`. NestJS obtiene metadatos/estado de PostgreSQL y el contenido normalizado del almacenamiento. Para acceder al original, la API autoriza primero y puede devolver una URL firmada de corta duración. La vista permite leer el documento sin descargarlo manualmente.
 
 La búsqueda no extrae texto ni indexa sincrónicamente. Tampoco carga el documento completo en cada resultado ni ejecuta una consulta individual a PostgreSQL por cada hit. La latencia se mide con las métricas y condiciones descritas en esta decisión: p95 propuesto ≤ 400 ms en backend y p95 propuesto ≤ 1.000 ms percibido, pendiente de validación con el evaluador.
 
@@ -125,28 +125,84 @@ El motor seleccionado es Elasticsearch por sus capacidades de texto completo, re
 - En una instancia, NestJS puede entregar eventos dentro del proceso. Con varias instancias de API/workers, el worker publica los eventos en un canal compartido (por ejemplo, Redis Pub/Sub) y cada instancia de API los distribuye a sus conexiones SSE locales; así el evento llega aunque la conexión del navegador esté en otra instancia.
 - El balanceador y proxy deben permitir `text/event-stream`, desactivar buffering para esa ruta y configurar un timeout de inactividad compatible. Enviar keep-alives cuando corresponda y liberar suscripciones al cerrar la conexión.
 
-## Escalabilidad y operación
+## Estrategia de escalabilidad por componente
 
-La arquitectura escala cada componente por separado. No se fija una capacidad máxima antes de medir el tamaño y distribución de documentos, concurrencia y recursos del entorno.
+La solución escala cada componente de forma independiente. No se declara una capacidad máxima antes de medir documentos representativos, concurrencia y recursos disponibles.
 
-| Componente | Estrategia de escala | Señales para escalar o revisar |
+| Componente | Estrategia | Métricas/señales para escalar |
 | --- | --- | --- |
-| Angular / transferencia | El límite por lote es configurable. Cada lote sube con concurrencia 1; diferentes usuarios/lotes pueden operar en paralelo. El binario se transmite bajo demanda, no se carga todo el lote en memoria. | Duración de lote, errores de red, transferencias activas, límite del proxy y almacenamiento disponible. |
-| API NestJS | Mantener API sin estado local de documentos y ejecutar varias instancias detrás de un balanceador. Usar pools de conexión limitados hacia PostgreSQL y Elasticsearch. | Latencia p95/p99, CPU/memoria, conexiones ocupadas, solicitudes rechazadas y errores por dependencia. |
-| SSE | Mantener conexiones largas distribuidas entre instancias API; compartir eventos desde workers con Pub/Sub y habilitar balanceo que soporte streaming. Cada instancia atiende sus propias conexiones. | Conexiones activas por instancia, desconexiones, reconexiones, retraso entre transición y evento, límites del proxy. |
-| Workers BullMQ | Escalar workers horizontalmente y ajustar concurrencia por worker independientemente de la subida. Aislar parsing CPU-intensivo en procesos/worker dedicados. Aplicar backpressure si la cola crece más rápido que la capacidad. | Profundidad/antigüedad de cola, tiempo de procesamiento, CPU/memoria, trabajos stalled, reintentos y errores. |
-| PostgreSQL | Indexar claves de consulta/filtros y mantener límites del pool. Considerar optimización de consultas, particionamiento o réplicas de lectura solo cuando métricas lo justifiquen. | Tiempo de consulta, locks, conexiones, tamaño de tablas/índices, almacenamiento y carga de escritura. |
-| Elasticsearch | Ajustar mapping/analyzers y medir tamaño del índice; ampliar nodos y revisar shards/replicas de acuerdo con volumen y tolerancia a fallos. Reindexar usando índice versionado/alias para reconstrucción segura. | Latencia de búsqueda, CPU/memoria, heap, almacenamiento, estado de shards, throughput y presión de indexación. |
-| Redis / BullMQ | Dimensionar memoria, persistencia y disponibilidad; mantener políticas de retención para jobs completados/fallidos. Separar recursos de Redis si la cola o Pub/Sub compiten de forma significativa. | Memoria, latencia, conexiones, errores, backlog, reinicios y pérdida de disponibilidad. |
-| Almacenamiento de objetos | Reemplazar volumen local por almacenamiento administrado compartido al pasar a varias instancias o producción; conservar claves en PostgreSQL y política de retención. | Capacidad, latencia de lectura/escritura, errores, costo y restauración de respaldos. |
+| Angular y carga | Un archivo en subida por lote; máximo de archivos configurable. Transmitir cada binario bajo demanda y no cargar todo el lote en memoria. Aplicar límites de tasa/consumo por usuario. | Duración de lote, transferencias activas, fallos de red, uso de memoria del navegador y límites del proxy. |
+| API NestJS | Mantener API sin estado local y ejecutar varias réplicas detrás de balanceador. Separar API de worker; limitar pools hacia PostgreSQL y Elasticsearch. | Latencia p95/p99, CPU/memoria, conexiones, errores y solicitudes rechazadas. |
+| Workers BullMQ | Ajustar concurrencia por worker y añadir réplicas según profundidad y antigüedad de cola. Separar parsing CPU-intensivo del proceso API; aplicar backpressure cuando los trabajos crezcan más rápido que la capacidad. | Profundidad/edad de cola, tiempo de procesamiento, CPU/memoria, stalled jobs, reintentos y errores. |
+| PostgreSQL | Mantener índices para filtros/relaciones y límites de pool. Optimizar consultas primero; considerar réplicas de lectura, particionamiento o servicio administrado cuando métricas lo justifiquen. | Latencia de consulta, locks, conexiones, tamaño de tablas/índices, almacenamiento y carga de escritura. |
+| Elasticsearch | Ajustar mappings/analyzers; ampliar nodos y configurar shards/replicas según volumen y disponibilidad requerida. Reindexar con índices versionados y aliases. | Latencia de búsqueda, CPU/memoria/heap, almacenamiento, estado de shards, throughput y presión de indexación. |
+| Redis / BullMQ | Dimensionar memoria y conexiones, configurar persistencia/alta disponibilidad de acuerdo con la política BullMQ y depurar jobs terminales según retención. Separar recursos de Redis si cola y Pub/Sub compiten. | Memoria, latencia, errores, conexiones, backlog y reinicios. |
+| SSE | Balancear conexiones largas y propagar eventos desde workers mediante canal compartido (Redis Pub/Sub) cuando existan varias instancias. Reconectar y recuperar estado desde PostgreSQL. | Conexiones activas, desconexiones, retraso de eventos, reconexiones y límites del proxy. |
+| Almacenamiento | Volumen Docker en local; Cloudflare R2 compartido en entornos desplegados. Guardar claves, tamaño, MIME y checksum en PostgreSQL; originales y texto normalizado fuera de Redis y PostgreSQL. | Capacidad, latencia/errores de lectura-escritura, costo, retención y resultados de restauración. |
 
-### Evolución por etapas
+### Evolución de la arquitectura y escalabilidad
 
-1. **Kata local:** una instancia de API, un worker, PostgreSQL, Elasticsearch y Redis mediante Docker Compose; volumen local para originales; límites configurables y medición de una carga representativa.
-2. **Mayor volumen:** varias instancias de API/workers, almacenamiento de objetos compartido, eventos SSE por Redis Pub/Sub y ajustes de concurrencia/índice guiados por métricas.
-3. **Alta disponibilidad:** PostgreSQL, Elasticsearch y Redis administrados o con topología redundante; respaldos, recuperación probada, monitoreo y despliegues separados por componente.
+#### Etapa 1 — Kata local
 
-El sistema aplica backpressure y límites configurables para tamaño por archivo, cantidad por lote, tasa de llegada y concurrencia. Los valores se determinan con pruebas de carga y límites del proveedor; no se prometen cargas ilimitadas.
+**Complejidad baja**
+
+- Docker Compose ejecuta API NestJS, workers, PostgreSQL, Elasticsearch y Redis/BullMQ; Angular se sirve localmente.
+- Un worker procesa documentos con concurrencia configurable.
+- Los originales se guardan en un volumen persistente de Docker.
+- Se configuran límites de tamaño por archivo, cantidad de archivos por lote y trabajos pendientes.
+- Se agregan métricas básicas de búsqueda, procesamiento e indexación.
+
+**Objetivo:** demostrar el flujo funcional y medir el rendimiento antes de distribuir servicios.
+
+#### Etapa 2 — Despliegue inicial
+
+**Escalado vertical y separación de servicios**
+
+- Desplegar API y workers como procesos/servicios independientes.
+- Usar PostgreSQL y Redis administrados cuando resulte conveniente; desplegar Elasticsearch administrado o en infraestructura dedicada.
+- Usar Cloudflare R2 para originales, reemplazando el volumen local. API y workers acceden mediante AWS SDK para JavaScript y endpoint compatible con S3.
+- Gestionar credenciales mediante variables de entorno protegidas o gestor de secretos, con permisos mínimos.
+- Incorporar métricas, logs centralizados, alertas y copias de seguridad de datos persistentes.
+
+**Objetivo:** separar cargas de trabajo y externalizar archivos sin rediseñar la aplicación.
+
+#### Etapa 3 — Escalado horizontal
+
+**Varias réplicas**
+
+- Ejecutar varias instancias API detrás de un balanceador y workers independientes, con concurrencia separada de la API.
+- Escalar workers según profundidad/antigüedad de cola y capacidad disponible.
+- Ajustar PostgreSQL, Elasticsearch y Redis con métricas reales de uso y latencia.
+- Usar R2 como almacenamiento compartido para que cualquier instancia autorizada de API/worker acceda al mismo objeto, sin depender del disco local de una réplica.
+- Aplicar límites por usuario, tamaño, lote, concurrencia y backpressure.
+- Mantener trabajos idempotentes y claves de objeto estables para reintentos.
+
+**Objetivo:** atender más usuarios y documentos sin que tareas pesadas bloqueen búsquedas ni dependan de una sola instancia.
+
+#### Etapa 4 — Alta disponibilidad
+
+**Resiliencia**
+
+- Distribuir API y workers entre instancias y zonas de disponibilidad cuando la plataforma lo permita.
+- Configurar failover, respaldos y recuperación a un punto en el tiempo para PostgreSQL.
+- Usar Elasticsearch multinodo con réplicas de índice y distribución adecuada a la tolerancia a fallos requerida.
+- Usar Redis redundante con recuperación compatible con los requisitos de BullMQ.
+- Definir políticas de acceso, versionado cuando corresponda y procedimientos de recuperación para objetos R2.
+- Probar restauraciones, simulacros de fallos y objetivos de recuperación RPO/RTO.
+- Supervisar consistencia entre objetos en R2, registros PostgreSQL, trabajos Redis/BullMQ y documentos Elasticsearch.
+
+**Objetivo:** tolerar fallos de infraestructura y recuperar servicio y datos dentro de objetivos acordados.
+
+### Consideraciones de almacenamiento con Cloudflare R2
+
+- Usar una abstracción de almacenamiento para desacoplar reglas de negocio del proveedor. Mantener volumen local como opción de desarrollo y pruebas.
+- Guardar en PostgreSQL clave de objeto estable, tamaño, MIME, checksum y metadatos de identificación/verificación; los binarios no se guardan en PostgreSQL ni Redis.
+- Mantener los objetos privados. Autorizar cada acceso antes de emitir URLs firmadas de corta duración; no depender de URLs públicas permanentes ni de rutas locales de instancias.
+- Usar credenciales de servicio con permisos mínimos para las operaciones requeridas y no guardar secretos en el repositorio.
+- Considerar retención, versionado y restauración del original y del contenido normalizado.
+- R2 no garantiza por sí solo disponibilidad de PostgreSQL, Redis, Elasticsearch ni de la plataforma que ejecuta API/workers; la disponibilidad se evalúa para el sistema completo.
+
+El sistema aplica backpressure y límites configurables para tamaño por archivo, cantidad por lote, tasa de llegada y concurrencia. El valor numérico de esos límites se determina con pruebas de carga y límites del proveedor; no se prometen cargas ilimitadas.
 
 ## Contratos de API propuestos
 
@@ -180,7 +236,7 @@ Los nombres de rutas son una propuesta para el diseño; se pueden ajustar al imp
 
 - [ ] Elegir transactional outbox o definir formalmente el alcance del mecanismo de compensación/reconciliación para PostgreSQL y Redis.
 - [ ] Elegir el mecanismo concreto de autenticación SSE y configurar proxy/balanceador para streaming; aplicar el contrato de evento y Pub/Sub compartido descritos arriba cuando existan varias instancias.
-- [ ] Definir formato y ubicación del contenido normalizado y política de retención de originales.
+- [ ] Definir formato del contenido normalizado y política de retención/versionado de originales y texto normalizado en el volumen local y Cloudflare R2.
 - [ ] Definir base/máximo del backoff, timeout por trabajo, política de pausa y recuperación de trabajos atascados; el máximo de reintentos transitorios ya está fijado en 3 reintentos adicionales.
 - [ ] Definir el ámbito de deduplicación y la política cuando el contenido del archivo coincide pero sus metadatos/versiones difieren.
 - [ ] Validar con el evaluador el conjunto de documentos, carga y criterio p95 para medir búsqueda.
