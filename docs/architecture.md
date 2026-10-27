@@ -2,24 +2,25 @@
 
 ## Propósito y decisiones base
 
-La aplicación permite cargar documentos técnicos, procesarlos e indexarlos en segundo plano, recibir cambios de estado en tiempo real, buscar por contenido y visualizar un documento. El diseño usa Angular + TypeScript, NestJS + TypeScript, PostgreSQL, Elasticsearch, Redis + BullMQ y Server-Sent Events (SSE). Docker Compose coordina el entorno de desarrollo y demostración.
+La aplicación permite cargar documentos técnicos, procesarlos e indexarlos en segundo plano, recibir cambios de estado en tiempo real, buscar por contenido y visualizar un documento. El diseño usa Angular + TypeScript (con Spartan NG y Tailwind CSS), NestJS + TypeScript, PostgreSQL, Elasticsearch, Redis + BullMQ y Server-Sent Events (SSE). Docker Compose coordina el entorno de desarrollo y demostración.
 
-Los estados persistidos del documento son `RECEIVED`, `PROCESSING`, `INDEXED` y `ERROR`, según `docs/decisiones-tecnicas.md`. Angular muestra etiquetas en español. `PENDIENTE` y `SUBIENDO` pertenecen solamente a la cola temporal de Angular.
+Los estados persistidos del documento son `RECEIVED`, `PROCESSING`, `INDEXED` y `ERROR`, según `docs/decisiones-tecnicas.md`. Angular los presenta con etiquetas traducidas al español o al inglés. `PENDIENTE` y `SUBIENDO` pertenecen solamente a la cola temporal de Angular.
 
 ## Razones del stack elegido
 
 | Tecnología | Motivo de selección | Costo o límite que se acepta |
 | --- | --- | --- |
-| Angular + TypeScript | Resuelve una interfaz con varios estados coordinados: selección de lote, subida secuencial, progreso por documento, búsqueda, filtros, visor y actualización SSE. TypeScript comparte contratos claros entre componentes frontend. | Requiere modelar explícitamente estados locales de lote y traducir códigos de estado/error del backend a mensajes de interfaz. |
+| Angular + TypeScript + Spartan NG | Resuelve una interfaz con varios estados coordinados: selección de lote, subida secuencial, progreso por documento, búsqueda, filtros, visor y actualización SSE. Spartan NG aporta primitivas accesibles sobre Angular CDK y estilos Tailwind que se copian al proyecto; no impone una versión fija de Angular. | Requiere mantener los componentes helm copiados, Tailwind CSS 4 y una capa propia para i18n, temas y carga de archivos, que Spartan no incluye. |
 | NestJS + TypeScript | Organiza API REST, validación, permisos, servicios de documento, integración con BullMQ y endpoints SSE bajo módulos y proveedores separados. El mismo lenguaje y tipos facilitan mantener contratos con Angular. | El backend debe separar API y worker en procesos ejecutables distintos para que extracción intensiva no afecte peticiones y streams SSE. |
 | PostgreSQL | Mantiene relaciones y restricciones para metadatos, versiones, permisos y estados, además de transacciones para registrar documentos y eventos outbox si se implementan. | No será el motor de búsqueda de contenido en esta decisión; hay que mantener consistencia eventual con la proyección Elasticsearch. |
 | Elasticsearch | Cubre texto completo sobre contenido y metadatos, relevancia ponderada, filtros, paginación y fragmentos resaltados. Se alinea directamente con los requisitos de búsqueda y evita consultas `LIKE`. | Añade un servicio que configurar, vigilar y reconciliar. El volumen máximo aún no se conoce y su capacidad deberá comprobarse con pruebas representativas. |
 | Redis + BullMQ | Mantiene trabajos asíncronos independientes, reintentos, backoff y concurrencia configurable para extracción e indexación. | Redis es una dependencia adicional y no reemplaza la cola secuencial de subida de Angular. Los trabajos deben ser idempotentes porque pueden reintentarse. |
 | SSE | El flujo requerido es principalmente unidireccional: el servidor notifica cambios de estado al navegador. Es apropiado para progreso sin polling; Angular usa HTTP para enviar cargas y búsquedas. | Una conexión SSE puede cortarse; la interfaz debe reconectar y consultar el estado persistido. El balanceador debe permitir conexiones HTTP de larga duración. |
-| Almacenamiento de objetos | Separa los binarios del modelo relacional y de Redis; volumen Docker local para la kata y Cloudflare R2 como destino para entornos desplegados, detrás de una interfaz de almacenamiento. | El volumen local no ofrece por sí solo alta disponibilidad ni respaldo de producción; R2 no garantiza la disponibilidad de los demás servicios de la aplicación. |
+| Autenticación mínima | Registro e inicio de sesión con email/contraseña, sesión por cookie HttpOnly y API keys personales. Cubre el acceso privado sin construir RBAC ni un proveedor externo. | Requiere implementar hash de contraseñas, CSRF, límites de intentos, revocación de sesiones/API keys y la UI de registro, login y gestión de claves. |
+| Almacenamiento de objetos | Cloudflare R2 como almacenamiento principal de originales y texto normalizado, en bucket privado y detrás de una interfaz de almacenamiento; MinIO opcional solo para tests offline. | R2 añade dependencia de red/proveedor, coste de operaciones y necesidad de CORS, URLs firmadas y ciclo de vida; no garantiza la disponibilidad de PostgreSQL, Redis, Elasticsearch ni de la plataforma. |
 | Docker Compose | Permite levantar el conjunto de dependencias de forma reproducible en desarrollo y demostración. | Su uso queda limitado al entorno local; no determina la plataforma de producción. |
 
-La selección responde a los requisitos funcionales y a la prueba de un día, pero implica más infraestructura que una solución basada solo en PostgreSQL Full-Text Search. Para mantener el alcance, se limita la primera versión a un flujo de ingestión, un índice explícito, una búsqueda paginada y una interfaz SSE; no incluye OCR ni búsqueda semántica.
+La selección responde a los requisitos funcionales de la prueba original, pero la incorporación de DOCX, autenticación, i18n y temas amplía el alcance más allá de un día. Para mantener la primera versión acotada, se limita a un flujo de ingestión, un índice explícito, una búsqueda paginada y una interfaz SSE; no incluye OCR ni búsqueda semántica.
 
 ## Diagrama de arquitectura y flujo
 
@@ -28,7 +29,7 @@ flowchart LR
     U[Usuario] -->|Selecciona lote| A[Angular: cola de subida secuencial]
     A -->|POST /api/documents: un archivo| API[NestJS API]
     API --> V[Validar formato, tamaño y metadatos]
-    V -->|Original| OS[(Almacenamiento de objetos<br/>Docker local / R2 desplegado)]
+    V -->|Original| OS[(Cloudflare R2<br/>bucket privado)]
     V -->|Registro + RECEIVED| PG[(PostgreSQL<br/>fuente de verdad)]
     API -->|Encolar ID del documento| R[(Redis + BullMQ)]
     API -->|202 Accepted + ID| A
@@ -55,12 +56,12 @@ flowchart LR
 
 1. Angular permite seleccionar un lote de tamaño variable. Mantiene una cola local y envía un solo archivo a la vez. El archivo siguiente no empieza a subirse hasta que el backend responde al anterior.
 2. Angular envía cada archivo y sus metadatos a `POST /api/documents` como `multipart/form-data`.
-3. NestJS valida autorización, formato real, tamaño, campos y metadatos. Se aceptan TXT UTF-8, Markdown UTF-8 y PDF con texto extraíble; no se hace OCR en esta versión.
-4. El backend conserva el original en almacenamiento durable. Para la kata se usa un volumen local de Docker; en entornos desplegados se usa Cloudflare R2 mediante AWS SDK para JavaScript y endpoint compatible con S3, detrás de una interfaz de almacenamiento.
+3. NestJS valida autorización, formato real, tamaño, campos y metadatos. Se aceptan TXT UTF-8, Markdown UTF-8, PDF con texto extraíble y DOCX de Word 2007+ (`.docx`, sin macros ni cifrado). No se hace OCR en esta versión.
+4. El backend conserva el original en Cloudflare R2 mediante AWS SDK para JavaScript y endpoint compatible con S3, detrás de una interfaz de almacenamiento. El bucket es privado; para tests offline se puede usar MinIO con la misma interfaz.
 5. PostgreSQL registra metadatos, clave de objeto estable, tamaño, MIME, checksum y estado inicial `RECEIVED`. La solicitud devuelve `202 Accepted` con el ID del documento solo cuando archivo y trabajo quedaron aceptados de forma recuperable.
 6. NestJS publica en BullMQ un trabajo que contiene el ID del documento y referencias necesarias, no los bytes del archivo. El estado pasa a `PROCESSING` mientras el trabajo espera o está activo. Si se implementa transactional outbox, el evento pendiente se escribe en PostgreSQL dentro de la misma transacción del registro; un dispatcher lo publica a Redis.
 7. El worker recupera el archivo, extrae y normaliza texto, y guarda el texto con una clave de objeto estable para que el visor pueda leerlo y el índice pueda reconstruirse. El original se conserva según la política de retención.
-8. El worker envía a Elasticsearch una proyección con el texto indexable, título, metadatos, etiquetas, versión e identificador estable. El trabajo debe ser idempotente, usando el ID del documento como clave para que un reintento no duplique resultados.
+8. El worker envía a Elasticsearch una proyección con el texto indexable, título, descripción, metadatos, etiquetas, versión e identificador estable. El trabajo debe ser idempotente, usando el ID del documento como clave para que un reintento no duplique resultados.
 9. Una vez que Elasticsearch confirma la operación de indexación, el backend actualiza el registro PostgreSQL a `INDEXED`. Si ocurre un fallo definitivo o se agotan los reintentos, registra `ERROR` y un código/mensaje visible. Los errores transitorios pueden reintentarse según la política de BullMQ.
 10. El cambio de estado se publica como evento SSE. El error de un archivo solo afecta a ese documento; Angular muestra su resultado y continúa con el próximo elemento de la cola.
 
@@ -86,7 +87,7 @@ Cada documento aceptado crea un trabajo BullMQ independiente, identificado con e
 
 | Clase | Ejemplos | Tratamiento |
 | --- | --- | --- |
-| Permanente / requiere corregir el archivo | `UNSUPPORTED_FILE_TYPE`, `FILE_TOO_LARGE`, `EMPTY_FILE`, `INVALID_METADATA`, `DUPLICATE_FILE`, `FILE_CORRUPTED`, `PASSWORD_PROTECTED`, `UNSUPPORTED_ENCODING`, `NO_EXTRACTABLE_TEXT` o `OCR_REQUIRED`. | No reintentar automáticamente. Mostrar la causa y una acción correctiva. El usuario puede subir una versión corregida como nuevo intento. |
+| Permanente / requiere corregir el archivo | `UNSUPPORTED_FILE_TYPE`, `FILE_TOO_LARGE`, `EMPTY_FILE`, `INVALID_METADATA`, `DUPLICATE_FILE`, `FILE_CORRUPTED`, `PASSWORD_PROTECTED`, `UNSUPPORTED_ENCODING`, `NO_EXTRACTABLE_TEXT`, `OCR_REQUIRED`, `DOCX_CORRUPTED`, `DOCX_ENCRYPTED`, `DOCX_EXTRACTION_FAILED` o `STORAGE_OBJECT_NOT_FOUND`. | No reintentar automáticamente. Mostrar la causa y una acción correctiva. El usuario puede subir una versión corregida como nuevo intento. |
 | Transitorio / posiblemente recuperable | `UPLOAD_FAILED`, `STORAGE_UNAVAILABLE`, `QUEUE_UNAVAILABLE`, `PROCESSING_TIMEOUT`, `SEARCH_ENGINE_UNAVAILABLE`; otros fallos de infraestructura claramente temporales. | Permitir hasta 3 reintentos adicionales (4 intentos totales), con backoff exponencial y variación aleatoria (jitter), manteniendo idempotencia. Angular reintenta transferencias y BullMQ jobs aceptados; agotados los intentos se registra el error y la cola avanza. |
 | Desconocido | Error no clasificado de extracción o indexación. | Registrar una referencia de soporte; no marcar como recuperable sin evidencia. Si el job es idempotente, ofrecer reintento manual individual después de revisar la causa. |
 
@@ -108,9 +109,9 @@ Concurrencia, tamaño máximo por archivo, tasa de entrada y capacidad de almace
 
 1. Angular envía la consulta, filtros y paginación a `GET /api/search`.
 2. NestJS valida la solicitud y determina la identidad/permisos. Los filtros de acceso se incorporan a la consulta de Elasticsearch antes de devolver resultados.
-3. Elasticsearch busca sobre título, autor, categoría, etiquetas, versión y texto extraído normalizado. Se configura análisis lingüístico en español para campos de texto, campos exactos para filtros cuando aplique, relevancia ponderada y fragmentos resaltados. No se usan `LIKE` ni recorridos completos de tablas para buscar contenido.
+3. Elasticsearch busca sobre título, descripción, autor, categoría, etiquetas, versión y texto extraído normalizado. Se configura análisis lingüístico en español para campos de texto, campos exactos para filtros cuando aplique, relevancia ponderada y fragmentos resaltados. No se usan `LIKE` ni recorridos completos de tablas para buscar contenido.
 4. La API responde con resultados paginados, campos de resumen y fragmentos resaltados. La primera página propone un máximo de 20 resultados. Usar orden estable; evaluar `search_after` cuando el volumen o la profundidad de paginación lo amerite.
-5. Al seleccionar un resultado, Angular pide `GET /api/documents/:id`. NestJS obtiene metadatos/estado de PostgreSQL y el contenido normalizado del almacenamiento. Para acceder al original, la API autoriza primero y puede devolver una URL firmada de corta duración. La vista permite leer el documento sin descargarlo manualmente.
+5. Al seleccionar un resultado, Angular pide `GET /api/documents/:id` para metadatos/estado y texto normalizado, y `GET /api/documents/:id/content` para el original que renderiza el visor. NestJS autoriza primero y devuelve el binario con `Range` o una URL firmada de corta duración. La vista permite leer el documento sin descargarlo manualmente.
 
 La búsqueda no extrae texto ni indexa sincrónicamente. Tampoco carga el documento completo en cada resultado ni ejecuta una consulta individual a PostgreSQL por cada hit. La latencia se mide con las métricas y condiciones descritas en esta decisión: p95 propuesto ≤ 400 ms en backend y p95 propuesto ≤ 1.000 ms percibido, pendiente de validación con el evaluador.
 
@@ -125,6 +126,37 @@ El motor seleccionado es Elasticsearch por sus capacidades de texto completo, re
 - En una instancia, NestJS puede entregar eventos dentro del proceso. Con varias instancias de API/workers, el worker publica los eventos en un canal compartido (por ejemplo, Redis Pub/Sub) y cada instancia de API los distribuye a sus conexiones SSE locales; así el evento llega aunque la conexión del navegador esté en otra instancia.
 - El balanceador y proxy deben permitir `text/event-stream`, desactivar buffering para esa ruta y configurar un timeout de inactividad compatible. Enviar keep-alives cuando corresponda y liberar suscripciones al cerrar la conexión.
 
+## Autenticación y acceso privado
+
+- **Registro e inicio de sesión:** email y contraseña; hash Argon2id; email normalizado y único; límite de intentos por IP/usuario. Endpoints `POST /api/auth/register`, `POST /api/auth/login`, `POST /api/auth/logout` y `GET /api/auth/me`.
+- **Sesión:** cookie HttpOnly, `Secure` en producción y `SameSite=Lax`; TTL deslizante de 7 días; el logout invalida la sesión. Si el frontend y la API están en orígenes distintos, CORS con credenciales y proxy same-origin preferido; en same-origin no se necesita CORS.
+- **CSRF:** para escrituras autenticadas por cookie, token CSRF de doble envío o cabecera `X-CSRF-Token`; las API keys no usan CSRF.
+- **API keys:** clave aleatoria de 32 bytes, prefijo identificable, hash SHA-256 en PostgreSQL, visualización única al crearla, revocación y expiración opcional. Cabecera `Authorization: Bearer <api_key>`; se aceptan para carga, búsqueda y consulta, no para SSE del navegador.
+- **SSE:** `GET /api/events` usa la cookie de sesión; `EventSource` con `withCredentials` solo si es cross-origin. No se ponen tokens en la URL.
+- **Autorización:** en la primera versión no hay roles ni RBAC; todo usuario autenticado puede cargar, buscar y visualizar. Si se añade propiedad/tenant, el filtro se aplica en la consulta a Elasticsearch y en PostgreSQL, no en el cliente.
+- **Fuerza bruta y abuso:** rate limit en login/registro, bloqueo temporal y registro de auditoría; verificación de email y recuperación de contraseña quedan fuera del alcance inicial.
+- **Secretos:** `DATABASE_URL`, `REDIS_URL`, `ELASTICSEARCH_URL`, `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET`, `R2_ENDPOINT`, `SESSION_SECRET` y parámetros de Argon2 solo en variables de entorno; nunca en el repositorio.
+
+## Visor de documentos
+
+- `GET /api/documents/:id` devuelve metadatos, estado y texto normalizado; no devuelve el binario.
+- `GET /api/documents/:id/content` devuelve el original autorizado con soporte de `Range` para PDF.js, o redirige a una URL firmada de R2 de corta duración. Si se usa R2, configurar CORS y exponer `Accept-Ranges`/`Content-Range`; si no, servir a través de la API.
+- **PDF:** PDF.js con navegación por páginas, zoom, capa de texto y búsqueda interna; no se asume texto seleccionable. Un PDF escaneado puede visualizarse aunque su indexación termine en `ERROR`.
+- **DOCX:** `docx-preview` en el navegador, solo lectura; el backend extrae texto con `mammoth`. No se usa un editor WYSIWYG. Los DOCX cifrados, con macros `.docm` o corruptos se rechazan. Tiptap no se usa para el visor: no tiene soporte Angular oficial y su importación DOCX es Pro/comercial y con conversión en la nube; se reevaluaría solo si se añade edición.
+- **Markdown:** renderizado con sanitización (DOMPurify) y enlaces externos controlados; el texto indexado se conserva aparte.
+- **TXT:** `textContent` y `white-space: pre-wrap`; la codificación se normaliza en backend y un archivo no UTF-8 termina en `UNSUPPORTED_ENCODING`.
+- **Seguridad:** nunca `innerHTML` sin sanitizar; sanitizar highlights de Elasticsearch con allowlist; CSP con `worker-src blob:` para PDF.js, `connect-src` para la API/R2 y `img-src` para imágenes del DOCX.
+- **Resaltado:** los fragmentos de búsqueda se resaltan con `<em>` de Elasticsearch y se sanitizan en el cliente. El visor DOCX puede resaltar coincidencias en el DOM con `TreeWalker`/`Range`, pero no se promete página exacta; para un enlace profundo se usa la vista de texto extraído con `<mark>`. PDF sí puede mapear páginas con PDF.js.
+
+## Frontend
+
+- Angular 22 + TypeScript, componentes standalone, signals y carga diferida de visores.
+- Spartan NG (`@spartan-ng/brain` + CLI/helm) sobre Angular CDK y Tailwind CSS 4; los componentes helm se copian al repositorio y se versionan con él.
+- **Riesgo de versión:** `@spartan-ng/brain` 1.8.3 declara Angular `>=21 <23`, pero el CLI 1.8.3 usa `@schematics/angular` 21.2.14. Validar `ng add`/instalación en Angular 22; si falla, copiar los componentes helm manualmente o fijar Angular 21. No se usa Optimus UI porque su versión 2.x exige Angular 22.1.4+ y es un fork comunitario de PrimeNG.
+- i18n runtime español/inglés con diccionarios y `code` + `params` del backend; temas claro/oscuro con variables CSS y `prefers-color-scheme`; responsive con drawer de filtros y visor a pantalla completa.
+- Interceptores para sesión/API key, errores, correlación y timeout; guards de autenticación; estado de lote en el componente/servicio y recuperación por ID tras recarga.
+- Pruebas: unitarias con Jest/TestBed, integración con MSW y e2e con Playwright; accesibilidad con axe-core.
+
 ## Estrategia de escalabilidad por componente
 
 La solución escala cada componente de forma independiente. No se declara una capacidad máxima antes de medir documentos representativos, concurrencia y recursos disponibles.
@@ -138,7 +170,7 @@ La solución escala cada componente de forma independiente. No se declara una ca
 | Elasticsearch | Ajustar mappings/analyzers; ampliar nodos y configurar shards/replicas según volumen y disponibilidad requerida. Reindexar con índices versionados y aliases. | Latencia de búsqueda, CPU/memoria/heap, almacenamiento, estado de shards, throughput y presión de indexación. |
 | Redis / BullMQ | Dimensionar memoria y conexiones, configurar persistencia/alta disponibilidad de acuerdo con la política BullMQ y depurar jobs terminales según retención. Separar recursos de Redis si cola y Pub/Sub compiten. | Memoria, latencia, errores, conexiones, backlog y reinicios. |
 | SSE | Balancear conexiones largas y propagar eventos desde workers mediante canal compartido (Redis Pub/Sub) cuando existan varias instancias. Reconectar y recuperar estado desde PostgreSQL. | Conexiones activas, desconexiones, retraso de eventos, reconexiones y límites del proxy. |
-| Almacenamiento | Volumen Docker en local; Cloudflare R2 compartido en entornos desplegados. Guardar claves, tamaño, MIME y checksum en PostgreSQL; originales y texto normalizado fuera de Redis y PostgreSQL. | Capacidad, latencia/errores de lectura-escritura, costo, retención y resultados de restauración. |
+| Almacenamiento | Cloudflare R2 compartido; MinIO opcional para tests offline. Guardar bucket, clave, tamaño, MIME y checksum en PostgreSQL; originales y texto normalizado fuera de Redis y PostgreSQL. | Capacidad, latencia/errores de lectura-escritura, costo, retención y resultados de restauración. |
 
 ### Evolución de la arquitectura y escalabilidad
 
@@ -148,7 +180,7 @@ La solución escala cada componente de forma independiente. No se declara una ca
 
 - Docker Compose ejecuta API NestJS, workers, PostgreSQL, Elasticsearch y Redis/BullMQ; Angular se sirve localmente.
 - Un worker procesa documentos con concurrencia configurable.
-- Los originales se guardan en un volumen persistente de Docker.
+- Los originales y el texto normalizado se guardan en un bucket R2 de desarrollo; MinIO opcional para tests offline.
 - Se configuran límites de tamaño por archivo, cantidad de archivos por lote y trabajos pendientes.
 - Se agregan métricas básicas de búsqueda, procesamiento e indexación.
 
@@ -160,7 +192,7 @@ La solución escala cada componente de forma independiente. No se declara una ca
 
 - Desplegar API y workers como procesos/servicios independientes.
 - Usar PostgreSQL y Redis administrados cuando resulte conveniente; desplegar Elasticsearch administrado o en infraestructura dedicada.
-- Usar Cloudflare R2 para originales, reemplazando el volumen local. API y workers acceden mediante AWS SDK para JavaScript y endpoint compatible con S3.
+- Usar Cloudflare R2 como almacenamiento único de originales y texto normalizado desde la etapa 1. API y workers acceden mediante AWS SDK para JavaScript y endpoint compatible con S3.
 - Gestionar credenciales mediante variables de entorno protegidas o gestor de secretos, con permisos mínimos.
 - Incorporar métricas, logs centralizados, alertas y copias de seguridad de datos persistentes.
 
@@ -195,39 +227,66 @@ La solución escala cada componente de forma independiente. No se declara una ca
 
 ### Consideraciones de almacenamiento con Cloudflare R2
 
-- Usar una abstracción de almacenamiento para desacoplar reglas de negocio del proveedor. Mantener volumen local como opción de desarrollo y pruebas.
+- Usar una abstracción de almacenamiento para desacoplar reglas de negocio del proveedor. Cloudflare R2 es el almacenamiento principal; MinIO queda solo como opción de tests offline.
+- Configurar el cliente S3 con `endpoint` de R2, `region: auto`, `forcePathStyle: true`, credenciales de API token y bucket privado; no usar URLs públicas.
+- Emitir URLs firmadas de corta duración (por ejemplo, 5 minutos) con `Content-Disposition: inline`; si el visor necesita `Range`, configurar CORS y exponer `Accept-Ranges`/`Content-Range`, o servir el binario por la API.
+- Definir ciclo de vida para objetos incompletos, retención/versionado y borrado; registrar `bucket`, `object_key`, `checksum`, tamaño y MIME en PostgreSQL.
 - Guardar en PostgreSQL clave de objeto estable, tamaño, MIME, checksum y metadatos de identificación/verificación; los binarios no se guardan en PostgreSQL ni Redis.
 - Mantener los objetos privados. Autorizar cada acceso antes de emitir URLs firmadas de corta duración; no depender de URLs públicas permanentes ni de rutas locales de instancias.
+- Para PDF.js, R2 debe permitir CORS, peticiones `Range` y exponer `Accept-Ranges`/`Content-Range`; si no se configura, el visor obtiene el binario a través de la API.
 - Usar credenciales de servicio con permisos mínimos para las operaciones requeridas y no guardar secretos en el repositorio.
 - Considerar retención, versionado y restauración del original y del contenido normalizado.
 - R2 no garantiza por sí solo disponibilidad de PostgreSQL, Redis, Elasticsearch ni de la plataforma que ejecuta API/workers; la disponibilidad se evalúa para el sistema completo.
 
 El sistema aplica backpressure y límites configurables para tamaño por archivo, cantidad por lote, tasa de llegada y concurrencia. El valor numérico de esos límites se determina con pruebas de carga y límites del proveedor; no se prometen cargas ilimitadas.
 
+## Modelo de datos mínimo
+
+| Tabla | Campos principales |
+| --- | --- |
+| `documents` | `id` UUID, `title`, `description`, `author`, `category`, `version`, `tags`, `status`, `mime`, `size`, `checksum`, `bucket`, `object_key`, `normalized_text_key`, `error_code`, `error_message`, `created_at`, `updated_at`, `indexed_at` |
+| `users` | `id`, `email` único, `password_hash`, `created_at`, `disabled_at` |
+| `api_keys` | `id`, `user_id`, `name`, `prefix`, `key_hash`, `last_used_at`, `expires_at`, `revoked_at` |
+| `sessions` (Redis) | `sid`, `user_id`, `created_at`, `last_seen_at`, TTL deslizante |
+
+`tags` se almacena como arreglo/JSON y se indexa como `keyword`; `version` es un string de metadatos, no un historial de versiones. `description` se indexa y se pondera junto con título y contenido.
+
 ## Contratos de API propuestos
 
 | Método y ruta | Uso | Respuesta principal |
 | --- | --- | --- |
-| `POST /api/documents` | Recibir un archivo y metadatos | `202 Accepted`, `documentId`, estado inicial `RECEIVED`. |
-| `GET /api/documents/:id` | Consultar metadatos, contenido y estado | Documento, estado y detalle de error opcional. |
-| `GET /api/search` | Buscar texto completo con filtros y paginación | Hits, total/indicador de página y fragmentos resaltados. |
-| `GET /api/events` | Recibir eventos de estado por SSE | Flujo de eventos autorizado. |
+| `POST /api/auth/register` | Registro con email y contraseña | Usuario creado y sesión iniciada (cookie). |
+| `POST /api/auth/login` | Inicio de sesión | Cookie de sesión y datos del usuario. |
+| `POST /api/auth/logout` | Cerrar sesión | Cookie invalidada. |
+| `GET /api/auth/me` | Usuario y sesión vigente | Usuario autenticado. |
+| `POST /api/api-keys` | Crear API key personal | Clave completa una sola vez, prefijo e identificador. |
+| `GET /api/api-keys` | Listar API keys | Prefijo, nombre, último uso y expiración; nunca la clave completa. |
+| `DELETE /api/api-keys/:id` | Revocar API key | Confirmación. |
+| `POST /api/documents` | Recibir un archivo y metadatos | `202 Accepted`, `documentId`, estado inicial `RECEIVED` (o `PROCESSING` si se alinea con HU-01). |
+| `GET /api/documents/:id` | Consultar metadatos, estado y texto normalizado | Documento, estado y detalle de error opcional. |
+| `GET /api/documents/:id/content` | Obtener el original para el visor, con `Range` | Binario autorizado o redirección a URL firmada de corta duración. |
+| `GET /api/search` | Buscar texto completo con filtros, orden y paginación | Hits, total, facetas y fragmentos resaltados. |
+| `GET /api/events` | Recibir eventos de estado por SSE | Flujo de eventos autorizado por cookie. |
 
 Los nombres de rutas son una propuesta para el diseño; se pueden ajustar al implementar, conservando las semánticas y criterios de aceptación.
 
 ## Criterios de aceptación
 
-- La carga devuelve ID y `RECEIVED` sin esperar a extracción/indexación y solo tras aceptar archivo y trabajo de forma recuperable; el backend transiciona a `PROCESSING` durante cola/procesamiento.
+- La carga devuelve ID y estado inicial (`RECEIVED`, presentado como “Procesando” en la UI, o `PROCESSING` si se alinea con HU-01) sin esperar a extracción/indexación y solo tras aceptar archivo y trabajo de forma recuperable; el backend transiciona a `PROCESSING` durante cola/procesamiento.
 - Angular envía los archivos de la cola de uno en uno; un archivo con error no bloquea los siguientes.
 - El resumen del lote reporta cantidades de documentos indexados, fallidos y todavía procesándose, con causa y recuperabilidad por archivo.
 - Originales y contenido normalizado quedan almacenados de forma persistente según la estrategia del entorno; PostgreSQL conserva metadatos/estado y Elasticsearch la proyección de búsqueda.
 - El worker extrae e indexa fuera de la solicitud HTTP, con idempotencia, hasta 3 reintentos adicionales configurables para errores transitorios y errores aislados por documento.
 - `INDEXED` se asigna luego de la confirmación de Elasticsearch; `ERROR` incluye código estable, mensaje seguro y referencia de soporte cuando aplique.
 - SSE notifica estados y Angular puede recuperar estado por ID después de una desconexión.
-- La búsqueda usa Elasticsearch, respeta permisos, devuelve paginación y fragmentos resaltados; no usa `LIKE` para contenido documental.
-- El índice contiene identificador estable, título, autor, categoría, etiquetas, versión y texto normalizado, con análisis en español para búsqueda textual.
+- La búsqueda usa Elasticsearch, respeta la autorización, devuelve paginación y fragmentos resaltados; no usa `LIKE` para contenido documental.
+- El índice contiene identificador estable, título, descripción, autor, categoría, etiquetas, versión y texto normalizado, con análisis en español para búsqueda textual.
 - El rendimiento se valida con volumen y concurrencia documentados; no se declara una capacidad máxima sin mediciones.
-- El detalle muestra metadatos y contenido estructurado sin requerir descargar el original.
+- El detalle muestra metadatos y contenido estructurado sin requerir descargar el original; el original se obtiene con `GET /api/documents/:id/content` (con `Range`) o una URL firmada de corta duración.
+- DOCX se acepta, se indexa y se visualiza en solo lectura; los DOCX cifrados, con macros o corruptos terminan en `ERROR` con causa legible.
+- Originales y texto normalizado se guardan en Cloudflare R2 con claves estables; PostgreSQL conserva `bucket`, `object_key`, checksum, tamaño y MIME; el contenido se sirve por URL firmada de corta duración o por la API.
+- El acceso privado exige registro/inicio de sesión; las API keys permiten acceso programático y se pueden revocar; SSE usa la cookie de sesión.
+- La interfaz está disponible en español e inglés, con tema claro/oscuro y diseño responsive; los códigos de error del backend se traducen en el cliente.
 - La medición de latencia publica entorno, dataset, mezcla de consultas, concurrencia, muestras, p50, p95, máximo observado, errores y throughput.
 - El máximo por lote, tamaño máximo por archivo y concurrencia de workers son configurables, validados en backend y medidos con pruebas de carga.
 - Cada transición, intento y fallo se registra con ID de documento/trabajo, número de intento, timestamp, código de error y referencia diagnóstica.
@@ -235,8 +294,13 @@ Los nombres de rutas son una propuesta para el diseño; se pueden ajustar al imp
 ## Decisiones pendientes
 
 - [ ] Elegir transactional outbox o definir formalmente el alcance del mecanismo de compensación/reconciliación para PostgreSQL y Redis.
-- [ ] Elegir el mecanismo concreto de autenticación SSE y configurar proxy/balanceador para streaming; aplicar el contrato de evento y Pub/Sub compartido descritos arriba cuando existan varias instancias.
-- [ ] Definir formato del contenido normalizado y política de retención/versionado de originales y texto normalizado en el volumen local y Cloudflare R2.
+- [ ] Configurar proxy/balanceador para streaming SSE y aplicar el contrato de evento y Pub/Sub compartido cuando existan varias instancias; la autenticación SSE ya está resuelta por cookie.
+- [ ] Definir formato del contenido normalizado y política de retención/versionado de originales y texto normalizado en Cloudflare R2.
+- [ ] Alinear el estado inicial con HU-01: devolver `PROCESSING` en el `202` o documentar formalmente el mapeo de `RECEIVED` a “Procesando” en la UI.
+- [ ] Definir el modo de registro (abierto, por invitación o por bandera de entorno) y la política de verificación de email/recuperación de contraseña.
+- [ ] Validar la fidelidad de `docx-preview` con documentos Word representativos y documentar las limitaciones.
+- [ ] Si se añade edición DOCX, evaluar Tiptap + Import DOCX (Pro/cloud) frente a `docx-editor`, incluyendo coste, licencia y privacidad.
+- [ ] Definir la política de actualización de los componentes helm de Spartan NG y la estrategia de i18n (servicio propio o Transloco).
 - [ ] Definir base/máximo del backoff, timeout por trabajo, política de pausa y recuperación de trabajos atascados; el máximo de reintentos transitorios ya está fijado en 3 reintentos adicionales.
 - [ ] Definir el ámbito de deduplicación y la política cuando el contenido del archivo coincide pero sus metadatos/versiones difieren.
 - [ ] Validar con el evaluador el conjunto de documentos, carga y criterio p95 para medir búsqueda.

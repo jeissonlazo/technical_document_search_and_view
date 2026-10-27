@@ -1,0 +1,67 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum DocumentStatus {
+  RECEIVED
+  PROCESSING
+  INDEXED
+  ERROR
+}
+
+model User {
+  id           String     @id @default(uuid())
+  email        String     @unique
+  passwordHash String
+  createdAt    DateTime   @default(now())
+  disabledAt   DateTime?
+  documents    Document[]
+  apiKeys      ApiKey[]
+}
+
+model ApiKey {
+  id         String    @id @default(uuid())
+  userId     String
+  name       String
+  prefix     String
+  keyHash    String    @unique
+  lastUsedAt DateTime?
+  expiresAt  DateTime?
+  revokedAt  DateTime?
+  createdAt  DateTime  @default(now())
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model Document {
+  id                String         @id @default(uuid())
+  userId            String
+  title             String
+  description       String?
+  author            String?
+  category          String?
+  version           String?
+  tags              String[]       @default([])
+  status            DocumentStatus @default(RECEIVED)
+  mime              String
+  size              Int
+  checksum          String
+  bucket            String
+  objectKey         String
+  normalizedTextKey String?
+  errorCode         String?
+  errorMessage      String?
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+  indexedAt         DateTime?
+  user              User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, status])
+  @@index([checksum])
+}

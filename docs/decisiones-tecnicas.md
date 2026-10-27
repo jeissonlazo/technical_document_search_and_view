@@ -4,17 +4,19 @@ Documento vivo para registrar las decisiones del buscador y visor de documentos 
 
 ## 1. Alcance de carga
 
-La carga acepta TXT, PDF con texto extraíble y Markdown. Se permite la extensión `.md` y `.markdown`. TXT y Markdown deben ser texto UTF-8; Markdown se indexa a partir de su contenido textual, conservando el original para mostrarlo de forma legible. La aceptación no se determina solo por la extensión o el `Content-Type`: el backend valida el contenido real.
+La carga acepta TXT, PDF con texto extraíble, Markdown y DOCX. Se permiten las extensiones `.md` y `.markdown`; DOCX solo `.docx` (no `.docm`). TXT y Markdown deben ser texto UTF-8; Markdown se indexa a partir de su contenido textual, conservando el original para mostrarlo de forma legible. DOCX se indexa a partir del texto extraído con `mammoth` y se visualiza en solo lectura con `docx-preview`. La aceptación no se determina solo por la extensión o el `Content-Type`: el backend valida el contenido real, incluido el ZIP de DOCX.
 
 Los PDF deben permitir extraer texto. OCR para PDF escaneados queda fuera del alcance inicial. Si un PDF es escaneado, está protegido/corrupto o no produce texto útil, ese documento termina en `ERROR` con una causa comprensible; la cola continúa con el siguiente archivo. No se indexa silenciosamente un PDF vacío.
 
+Los DOCX deben ser documentos de Word 2007+ sin cifrado ni macros. Se valida la firma ZIP, se limita el tamaño y la relación de descompresión, y se extrae texto con `mammoth`; un DOCX corrupto, cifrado o con macros termina en `ERROR` (`DOCX_CORRUPTED`, `DOCX_ENCRYPTED` o `DOCX_EXTRACTION_FAILED`). La visualización se hace en el navegador con `docx-preview`, en modo solo lectura; no se implementa edición ni conversión a PDF en la primera versión.
+
 ## Ciclo de estados y errores del documento
 
-Los estados persistidos del backend son `RECEIVED`, `PROCESSING`, `INDEXED` y `ERROR`; Angular los presenta con etiquetas en español (`Recibido`, `Procesando`, `Indexado`, `Error`). `PENDIENTE` y `SUBIENDO` son estados transitorios de la cola del frontend y no se persisten como estado del documento.
+Los estados persistidos del backend son `RECEIVED`, `PROCESSING`, `INDEXED` y `ERROR`; Angular los presenta con etiquetas traducidas al español o al inglés (`Recibido`/`Received`, `Procesando`/`Processing`, `Indexado`/`Indexed`, `Error`/`Error`). `PENDIENTE` y `SUBIENDO` son estados transitorios de la cola del frontend y no se persisten como estado del documento.
 
 | Estado | Significado | Transiciones permitidas |
 | --- | --- | --- |
-| `RECEIVED` | El backend recibió y validó el archivo, lo almacenó y creó el registro. Estado inicial devuelto por la API. | `PROCESSING` cuando el trabajo entra en cola/worker; `ERROR` si un fallo definitivo impide continuar. |
+| `RECEIVED` | El backend recibió y validó el archivo, lo almacenó y creó el registro. Estado inicial devuelto por la API (o `PROCESSING` si se alinea con HU-01). | `PROCESSING` cuando el trabajo entra en cola/worker; `ERROR` si un fallo definitivo impide continuar. |
 | `PROCESSING` | El trabajo está en cola, extrayendo texto o indexando. Los reintentos transitorios mantienen este estado. | `INDEXED` si Elasticsearch confirma la indexación; `ERROR` ante fallo permanente o agotamiento de intentos. |
 | `INDEXED` | El texto y metadatos quedaron disponibles para búsqueda y visualización. | Estado terminal. |
 | `ERROR` | Fallo definitivo o intentos agotados. Se conserva registro, código y causa; el documento no está disponible en el índice. | Estado terminal. Un reintento manual autorizado crea un nuevo intento y vuelve a `RECEIVED`/`PROCESSING`, conservando historial del intento anterior. |
@@ -27,17 +29,21 @@ El backend devuelve un código estable, etapa, mensaje seguro, indicador `retrya
 
 | Código estable | Etapa / condición | Mensaje visible sugerido |
 | --- | --- | --- |
-| `UNSUPPORTED_FILE_TYPE` | Validación: extensión o tipo real distinto de TXT, PDF o Markdown | “No se pudo procesar **{archivo}**: el formato no está admitido. Sube un archivo TXT, PDF o Markdown.” |
+| `UNSUPPORTED_FILE_TYPE` | Validación: extensión o tipo real distinto de TXT, PDF, Markdown o DOCX | “No se pudo procesar **{archivo}**: el formato no está admitido. Sube un archivo TXT, PDF, Markdown o DOCX.” |
 | `FILE_TOO_LARGE` | Validación: supera el límite configurado por archivo | “No se pudo procesar **{archivo}**: supera el tamaño máximo permitido de {límite}.” |
 | `EMPTY_FILE` | Validación: archivo sin contenido | “No se pudo procesar **{archivo}**: el archivo está vacío.” |
 | `INVALID_METADATA` | Validación: faltan campos o metadatos no válidos | “No se pudo procesar **{archivo}**: revisa los metadatos obligatorios e inténtalo de nuevo.” |
 | `DUPLICATE_FILE` | Validación: se detectó un documento duplicado según la política configurada | “No se pudo agregar **{archivo}**: ya existe un documento con el mismo contenido.” |
 | `UPLOAD_FAILED` | Recepción: transferencia interrumpida antes de aceptar el archivo | “No se pudo subir **{archivo}**: la transferencia falló. Puedes reintentar este archivo; el lote continuará.” |
-| `STORAGE_UNAVAILABLE` | Recepción/almacenamiento: no fue posible guardar durablemente el archivo | “No se pudo guardar **{archivo}** por un problema temporal del servicio. Intenta de nuevo más tarde.” |
+| `STORAGE_UNAVAILABLE` | Recepción/almacenamiento: no fue posible guardar durablemente el archivo en R2 | “No se pudo guardar **{archivo}** por un problema temporal del servicio. Intenta de nuevo más tarde.” |
+| `STORAGE_OBJECT_NOT_FOUND` | Lectura: el objeto no existe en R2 o la clave es inválida | “No se pudo abrir **{archivo}**: el contenido no está disponible. Contacta a soporte con el código {referencia}.” |
 | `FILE_CORRUPTED` | Extracción: archivo o PDF mal formado/ilegible | “No se pudo procesar **{archivo}**: el archivo está dañado o no se puede leer. Verifica el original.” |
 | `PASSWORD_PROTECTED` | Extracción: PDF cifrado o requiere contraseña | “No se pudo procesar **{archivo}**: el PDF está protegido con contraseña. Sube una copia desbloqueada.” |
 | `UNSUPPORTED_ENCODING` | Extracción: TXT/Markdown no se puede leer como UTF-8 | “No se pudo procesar **{archivo}**: guarda el texto en UTF-8 y vuelve a intentarlo.” |
 | `TEXT_EXTRACTION_FAILED` | Extracción: error del parser no clasificado como archivo corrupto | “No se pudo extraer texto de **{archivo}**. Verifica el documento o comparte el código {referencia} con soporte.” |
+| `DOCX_CORRUPTED` | Extracción: DOCX mal formado o ZIP inválido | “No se pudo procesar **{archivo}**: el documento Word está dañado o no se puede leer.” |
+| `DOCX_ENCRYPTED` | Extracción: DOCX cifrado o protegido | “No se pudo procesar **{archivo}**: el documento Word está protegido. Sube una copia sin contraseña.” |
+| `DOCX_EXTRACTION_FAILED` | Extracción: error de `mammoth` o contenido no soportado | “No se pudo extraer texto de **{archivo}**. Verifica el documento o comparte el código {referencia} con soporte.” |
 | `NO_EXTRACTABLE_TEXT` / `OCR_REQUIRED` | Extracción: PDF sin texto seleccionable; OCR no está incluido | “No se pudo procesar **{archivo}**: no encontramos texto seleccionable. Esta versión no incluye OCR; sube una copia con texto reconocido.” |
 | `QUEUE_UNAVAILABLE` | Cola: Redis/BullMQ no disponible temporalmente | “No se pudo iniciar el procesamiento de **{archivo}** por un problema temporal. Intenta de nuevo.” |
 | `PROCESSING_TIMEOUT` | Procesamiento: se agotó el tiempo máximo del trabajo | “El procesamiento de **{archivo}** excedió el tiempo permitido. Si el problema persiste, comparte el código {referencia} con soporte.” |
@@ -152,14 +158,34 @@ El tiempo disponible para la kata es de un día. Elasticsearch aumenta la cantid
 
 | Componente | Tecnología | Responsabilidad |
 | --- | --- | --- |
-| Frontend | Angular + TypeScript | Formulario de carga, cola secuencial en el navegador, búsqueda, filtros, resultados resaltados, visor y estado reactivo. |
-| API / backend | NestJS + TypeScript | API REST, validación, permisos, metadatos, estados y coordinación de trabajos. |
+| Frontend | Angular 22 + TypeScript + Spartan NG + Tailwind CSS 4 | Formulario de carga, cola secuencial, búsqueda, filtros, resultados resaltados, visores (PDF.js, `docx-preview`, Markdown, TXT), i18n es/en, temas y estado reactivo. |
+| API / backend | NestJS + TypeScript | API REST, autenticación, validación, metadatos, estados y coordinación de trabajos. |
 | Persistencia principal | PostgreSQL | Fuente de verdad para metadatos y estados de cada documento. |
 | Búsqueda | Elasticsearch | Índice derivado para texto completo, relevancia, filtros, paginación y fragmentos resaltados. |
 | Cola de procesamiento | Redis + BullMQ | Trabajos asíncronos de extracción e indexación; no administra la subida desde el navegador. |
 | Tiempo real | Server-Sent Events (SSE) | Notificaciones del backend al frontend cuando cambia el estado de un documento. |
+| Autenticación | Sesión por cookie HttpOnly + API keys | Registro, inicio de sesión, sesión, cierre, API keys personales; sin roles en la primera versión. |
+| Visores | PDF.js, `docx-preview`, Markdown sanitizado y visor TXT | Renderizar el original en solo lectura sin descargarlo; DOCX se indexa con `mammoth` en backend. |
 | Entorno local | Docker Compose | Levantar API, trabajador, PostgreSQL, Elasticsearch y Redis para desarrollo y demostración. |
-| Almacenamiento de binarios | Volumen Docker local para la kata; Cloudflare R2 para entornos desplegados | Conservar originales y contenido normalizado fuera de Redis/PostgreSQL, mediante una interfaz de almacenamiento compatible con local y R2. |
+| Almacenamiento de binarios | Cloudflare R2 (bucket privado); MinIO solo para tests offline | Conservar originales y contenido normalizado fuera de Redis/PostgreSQL, mediante una interfaz de almacenamiento compatible con R2/S3. |
+
+### Autenticación mínima
+
+- Registro e inicio de sesión con email y contraseña; hash Argon2id; email normalizado y único; límite de intentos y bloqueo temporal.
+- Sesión con cookie HttpOnly, `Secure` en producción y `SameSite=Lax`; TTL deslizante; el logout invalida la sesión. En SSE se usa la misma cookie.
+- API keys personales: clave aleatoria, prefijo visible, hash SHA-256 en PostgreSQL, visualización única, revocación y expiración opcional; `Authorization: Bearer <api_key>`.
+- Sin roles ni permisos diferenciados en la primera versión; todo usuario autenticado puede cargar, buscar y visualizar. Si se añade propiedad/tenant, se filtra en PostgreSQL y Elasticsearch.
+- CSRF para escrituras con cookie; rate limit en login/registro; verificación de email y recuperación de contraseña fuera del alcance inicial.
+- El registro puede restringirse por invitación o bandera de entorno; en desarrollo se permite abierto.
+
+### Cloudflare R2
+
+- Bucket privado; el backend usa AWS SDK para JavaScript con `endpoint` de R2, `region: auto`, `forcePathStyle: true` y credenciales de API token.
+- Claves estables: `documents/{userId}/{documentId}/original.{ext}` y `documents/{userId}/{documentId}/normalized.txt`; PostgreSQL guarda `bucket`, `object_key`, `checksum`, tamaño y MIME.
+- El frontend nunca recibe credenciales; el contenido se sirve por endpoint autorizado o URL firmada de corta duración (5 minutos) con `Content-Disposition: inline`.
+- Para PDF.js, configurar CORS y `Range` en R2 y exponer `Accept-Ranges`/`Content-Range`; si no, la API actúa como proxy.
+- Configurar ciclo de vida para objetos incompletos, retención/versionado y borrado; la eliminación en R2 debe ser consistente con PostgreSQL.
+- MinIO solo se usa para tests offline con la misma interfaz S3; no es el almacenamiento de producción.
 
 ### Reglas de integración
 
@@ -169,6 +195,9 @@ El tiempo disponible para la kata es de un día. Elasticsearch aumenta la cantid
 - Los trabajos de BullMQ deben ser idempotentes y usar el ID del documento para evitar efectos duplicados ante reintentos o recuperación de trabajos.
 - Si no se logra guardar el trabajo en Redis después de crear el documento, el backend no debe dejarlo indefinidamente en `RECEIVED` o `PROCESSING`: debe compensar la operación o marcar un error recuperable y registrarlo.
 - La cola seleccionada en Angular vive en el navegador en esta versión. Si se cierra o recarga la pestaña, los archivos todavía no enviados pueden perderse; los ya aceptados se recuperan consultando sus IDs en backend. La persistencia/reanudación de la cola queda fuera del alcance inicial.
+- El frontend usa Angular 22 + Spartan NG + Tailwind 4; los componentes helm se copian y versionan con el proyecto. No se usa Optimus UI ni un editor DOCX.
+- Los DOCX se validan como ZIP, se limitan en tamaño/descompresión y se extraen con `mammoth`; el visor `docx-preview` es solo lectura.
+- La sesión y las API keys se gestionan en backend; el frontend nunca recibe la clave completa después de crearla ni credenciales de R2.
 - Docker Compose se usa para desarrollo y demo. No se considera por sí mismo la estrategia de despliegue de producción.
 
 ## Parámetros para definir la capacidad mínima de carga
@@ -183,9 +212,9 @@ Antes de fijar límites de producción, recoger o acordar estos datos:
 | Cargas simultáneas | Presión sobre red, CPU, disco, base de datos e índice | El frontend sube un solo archivo a la vez por lote. La concurrencia de procesamiento en backend es independiente y configurable. |
 | Tasa de llegada y ráfagas | Capacidad de ingestión y tamaño de cola | Estimar documentos/minuto promedio y pico, incluyendo reintentos. |
 | Tiempo de subida y timeout | Experiencia de usuario y conexiones ocupadas | El cliente debe poder subir archivos grandes sin bloquear la indexación; acordar timeouts en cada capa. |
-| Formatos y complejidad del contenido | CPU y memoria de extracción | Aceptar TXT UTF-8, Markdown UTF-8 y PDF con texto extraíble; OCR queda fuera del alcance inicial. PDF ilegible, protegido, corrupto o sin texto útil termina en `ERROR` con causa clara. |
+| Formatos y complejidad del contenido | CPU y memoria de extracción | Aceptar TXT UTF-8, Markdown UTF-8, PDF con texto extraíble y DOCX sin macros; OCR queda fuera del alcance inicial. PDF ilegible, protegido, corrupto o sin texto útil termina en `ERROR` con causa clara; DOCX corrupto, cifrado o con macros también. |
 | Tamaño de texto extraído | Tamaño de índice y duración de indexación | Limitar páginas, caracteres o bytes extraídos por archivo para proteger el servicio. |
-| Almacenamiento y retención | Espacio, copias de seguridad y borrado | Originales y texto normalizado se guardan fuera de PostgreSQL/Redis: volumen local para la kata y Cloudflare R2 en entornos desplegados; definir retención y versionado. |
+| Almacenamiento y retención | Espacio, copias de seguridad y borrado | Originales y texto normalizado se guardan en Cloudflare R2 (bucket privado); definir retención, versionado y ciclo de vida. |
 | Idempotencia y reintentos | Evita duplicados tras fallos de red o reenvíos | Usar una clave/identificador de operación y definir cuándo una repetición crea o reutiliza el documento. |
 | Seguridad | Riesgo de archivos maliciosos y exposición de datos | Validar extensión y tipo real, nombres, permisos, límites, y proteger el almacenamiento y la descarga. |
 | Observabilidad | Permite saber si los límites son adecuados | Medir tasas, tamaño, concurrencia, tiempo de subida, espera en cola, extracción, indexación y errores. |
@@ -197,7 +226,7 @@ Antes de fijar límites de producción, recoger o acordar estos datos:
 - No se ha acordado un límite de tamaño individual ni de volumen total. Esos valores deben medirse y configurarse según el entorno; no inventar cifras como requisito.
 - La interfaz valida el máximo configurable de archivos por lote, comunica progreso/errores por archivo y evita consumir memoria sin control. Los binarios se transmiten bajo demanda, no se leen todos los archivos completos a memoria.
 - El backend mantiene controles de tamaño por archivo, validación durante streaming, almacenamiento disponible, tasa de entrada y procesamiento pendiente. Los límites operativos no cambian la regla de subida secuencial del frontend.
-- No ejecutar OCR en la primera versión; los PDF sin texto extraíble se marcan como `ERROR` con un motivo legible y no detienen el resto de la cola.
+- No ejecutar OCR en la primera versión; los PDF sin texto extraíble se marcan como `ERROR` con un motivo legible y no detienen el resto de la cola. Los DOCX corruptos, cifrados o con macros se tratan igual.
 
 ## Flujo y controles recomendados
 
@@ -205,8 +234,8 @@ Antes de fijar límites de producción, recoger o acordar estos datos:
 2. El frontend toma el siguiente archivo pendiente, valida lo que pueda localmente y lo envía; no inicia la subida del siguiente hasta recibir la respuesta de aceptación o error de este archivo.
 3. El backend valida autenticación/autorización, metadatos, tipo real y tamaño durante streaming; no confía solo en `Content-Length`, el MIME declarado o la extensión.
 4. El backend guarda el archivo de forma segura y crea el registro `RECEIVED`.
-5. El backend encola el trabajo recuperable y responde con `202 Accepted`, un ID de seguimiento y estado `RECEIVED`. Esta respuesta termina la subida para el frontend; no implica que la indexación terminó.
-6. Tras la confirmación, el frontend actualiza el progreso y comienza la subida del siguiente archivo; el backend extrae texto e indexa en segundo plano, con límites de recursos y fallos aislados por documento. Si la extracción del PDF no produce texto útil, marca ese documento `ERROR` y continúa el lote.
+5. El backend encola el trabajo recuperable y responde con `202 Accepted`, un ID de seguimiento y estado `RECEIVED` (o `PROCESSING` si se alinea con HU-01). Esta respuesta termina la subida para el frontend; no implica que la indexación terminó.
+6. Tras la confirmación, el frontend actualiza el progreso y comienza la subida del siguiente archivo; el backend extrae texto e indexa en segundo plano, con límites de recursos y fallos aislados por documento. Si la extracción del PDF no produce texto útil o el DOCX es corrupto/cifrado, marca ese documento `ERROR` y continúa el lote.
 7. El backend cambia a `PROCESSING` mientras el trabajo esté en cola o activo, y luego a `INDEXED` o `ERROR`; emite los eventos de tiempo real correspondientes.
 8. El frontend puede consultar el estado por ID o recibir eventos para recuperar el resultado tras desconexiones.
 
@@ -214,25 +243,41 @@ No se debe confirmar `RECEIVED` si el archivo o la tarea no quedaron guardados d
 
 ## Decisiones pendientes
 
+- [x] Adoptar Spartan NG (Angular CDK + Tailwind 4) como base de UI, con Angular 22 y versiones exactas.
+- [x] Adoptar `docx-preview` para visualización DOCX y `mammoth` para extracción de texto; descartar `docx-editor` por ser React/Vue y orientado a edición.
+- [x] Adoptar autenticación mínima: registro, inicio de sesión, sesión por cookie HttpOnly y API keys personales, sin roles.
+- [x] Adoptar i18n runtime español/inglés y temas claro/oscuro con persistencia local.
+- [x] Añadir `descripción` a los metadatos y al índice de búsqueda.
+- [x] Adoptar Cloudflare R2 como almacenamiento principal de originales y texto normalizado, con bucket privado y URLs firmadas.
 - [ ] Confirmar tamaño máximo por archivo a partir de los documentos reales o de prueba.
 - [ ] Definir valores iniciales configurables para cantidad máxima de archivos por lote, tamaño por archivo y concurrencia de workers con pruebas representativas.
 - [ ] Evaluar persistencia/reanudación de la cola del frontend si pasa a ser requisito; no está incluida en la primera versión.
 - [ ] Acordar si se impone una pausa o límite de tasa cuando el backend acumule demasiadas tareas pendientes.
-- [ ] Definir política de retención/versionado y respaldo de originales y texto normalizado en almacenamiento local/R2.
+- [ ] Definir política de retención/versionado y respaldo de originales y texto normalizado en Cloudflare R2.
 - [ ] Definir base y máximo del backoff, timeout por trabajo, política de pausa y recuperación de trabajos atascados; ya se fijó el máximo en 3 reintentos adicionales para fallos transitorios.
 - [ ] Definir ámbito de unicidad de `DUPLICATE_FILE` (por ejemplo, hash SHA-256 dentro de una organización) y si se permite importar el mismo contenido con metadatos/versiones diferentes.
 - [ ] Definir si la coordinación PostgreSQL-Redis requiere patrón outbox para el entorno de despliegue previsto.
 - [ ] Medir ingestión e indexación con una muestra representativa; registrar resultados y entorno.
+- [ ] Definir el modo de registro (abierto, por invitación o por bandera), la verificación de email y la recuperación de contraseña.
+- [ ] Definir alcance y expiración de las API keys (lectura/escritura, por usuario, revocación).
+- [ ] Validar la fidelidad de `docx-preview` con DOCX representativos y documentar limitaciones.
+- [ ] Si se añade edición DOCX, evaluar Tiptap + Import DOCX (Pro/cloud) frente a `docx-editor`, incluyendo coste, licencia y privacidad.
+- [ ] Definir la política de actualización de los componentes helm de Spartan NG y la estrategia de i18n (servicio propio o Transloco).
+- [ ] Alinear el estado inicial con HU-01: devolver `PROCESSING` en el `202` o documentar formalmente el mapeo de `RECEIVED` a “Procesando” en la UI.
 
 ## Criterios de aceptación para la carga
 
 - La API rechaza formatos, tamaños y metadatos inválidos con errores comprensibles.
-- La respuesta inicial no espera a que termine la extracción/indexación e incluye un ID y estado `RECEIVED`; el documento pasa a `PROCESSING` mientras el job está en cola o activo.
+- La respuesta inicial no espera a que termine la extracción/indexación e incluye un ID y estado inicial (`RECEIVED`, presentado como “Procesando”, o `PROCESSING` si se alinea con HU-01); el documento pasa a `PROCESSING` mientras el job está en cola o activo.
 - Se actualiza el estado final a `INDEXED` o `ERROR` y se notifica al frontend con un código y mensaje comprensible cuando hay error.
 - El frontend sube un solo archivo a la vez por lote y no inicia el siguiente hasta recibir la respuesta del backend para el actual.
 - La cantidad máxima del lote es configurable y se valida; el progreso y los errores se muestran por archivo.
-- Se aceptan TXT UTF-8, Markdown UTF-8 y PDF con texto extraíble; la validación del backend comprueba el tipo real.
+- Se aceptan TXT UTF-8, Markdown UTF-8, PDF con texto extraíble y DOCX sin macros; la validación del backend comprueba el tipo real, incluido el ZIP de DOCX.
 - Un PDF sin texto extraíble termina en `ERROR` con una causa comprensible; no se ejecuta OCR y el resto de la cola continúa.
+- Un DOCX corrupto, cifrado o con macros termina en `ERROR` con causa comprensible; no se ejecutan macros ni contenido externo.
+- Los originales y el texto normalizado se guardan en R2 con claves estables; PostgreSQL conserva `bucket`, `object_key`, checksum, tamaño y MIME. El contenido se sirve por URL firmada o por la API, nunca por una URL pública permanente.
+- El acceso privado exige registro/inicio de sesión; las API keys permiten acceso programático y se pueden revocar; SSE usa la cookie de sesión.
+- La interfaz está disponible en español e inglés, con tema claro/oscuro y diseño responsive; los códigos de error se traducen en el cliente.
 - Los límites operativos de tamaño por archivo y almacenamiento se validan en frontend cuando sea posible y siempre en el backend.
 - Cada error se asocia al archivo que lo causó y no detiene la cola; la subida del siguiente archivo continúa.
 - El resumen del lote muestra archivos indexados, fallidos y todavía procesándose, con causa y posibilidad de reintento por archivo.
@@ -253,19 +298,29 @@ No se debe confirmar `RECEIVED` si el archivo o la tarea no quedaron guardados d
 | --- | --- | --- | --- |
 | 2026-10-27 | La cantidad de archivos por lote tendrá un máximo configurable; Angular administra la cola y sube secuencialmente | Adoptada, valor pendiente | El siguiente archivo empieza solo cuando termina la subida y el backend confirma el anterior; el límite se fijará con pruebas de capacidad. |
 | 2026-10-27 | La confirmación de subida es independiente de la finalización de indexación | Adoptada | El backend acepta cada documento y lo procesa de forma asíncrona; la indexación puede continuar mientras el frontend sube el siguiente. |
-| 2026-10-27 | Aceptar TXT UTF-8, Markdown UTF-8 y PDF con texto extraíble; no incluir OCR en el alcance inicial | Adoptada | Mantiene el procesamiento acotado para la kata. Un PDF sin texto útil se marca `ERROR` con causa y no bloquea la cola. |
-| 2026-10-27 | Persistir `RECEIVED`, `PROCESSING`, `INDEXED` y `ERROR`; mantener `PENDIENTE`/`SUBIENDO` en frontend | Adoptada | Distingue recepción durable, procesamiento y estados terminales; Angular presenta etiquetas en español. |
+| 2026-10-27 | Aceptar TXT UTF-8, Markdown UTF-8 y PDF con texto extraíble; no incluir OCR en el alcance inicial | Superada por la decisión DOCX del 2026-10-28 | Mantiene el procesamiento acotado para la kata. Un PDF sin texto útil se marca `ERROR` con causa y no bloquea la cola. |
+| 2026-10-27 | Persistir `RECEIVED`, `PROCESSING`, `INDEXED` y `ERROR`; mantener `PENDIENTE`/`SUBIENDO` en frontend | Adoptada; etiquetas actualizadas a es/en el 2026-10-28 | Distingue recepción durable, procesamiento y estados terminales; Angular presenta etiquetas traducidas. |
 | 2026-10-27 | Aislar errores por archivo y continuar automáticamente la cola | Adoptada | Un archivo fallido no impide la carga de los siguientes; se muestra la causa y se ofrece reintento individual cuando aplique. |
 | 2026-10-27 | Tratar un lote como operación de UI con una solicitud individual por archivo | Adoptada | Angular mantiene una sola cola secuencial; NestJS/BullMQ ejecutan y reportan cada documento independientemente. |
 | 2026-10-27 | Reintentar errores transitorios hasta 3 veces adicionales con backoff exponencial y jitter | Adoptada | Equivale a un máximo de 4 intentos totales; validación y fallos permanentes de lectura no se reintentan automáticamente. |
-| 2026-10-27 | Elegir Angular + TypeScript, NestJS + TypeScript, PostgreSQL, Elasticsearch, Redis + BullMQ, SSE y Docker Compose para desarrollo | Adoptada | Cubre interfaz, API, persistencia relacional, búsqueda indexada, procesamiento asíncrono y notificaciones requeridas por la prueba. |
+| 2026-10-27 | Elegir Angular + TypeScript, NestJS + TypeScript, PostgreSQL, Elasticsearch, Redis + BullMQ, SSE y Docker Compose para desarrollo | Superada por la decisión Spartan NG del 2026-10-28 | Cubre interfaz, API, persistencia relacional, búsqueda indexada, procesamiento asíncrono y notificaciones requeridas por la prueba. |
 | 2026-10-27 | Mantener la subida secuencial en Angular y el procesamiento asíncrono en BullMQ con concurrencia independiente | Adoptada | La confirmación de recepción libera la subida siguiente; extracción e indexación pueden seguir en paralelo según capacidad del trabajador. |
 | 2026-10-27 | Usar PostgreSQL como fuente de verdad y Elasticsearch como índice reconstruible | Adoptada | Evita tratar el índice de búsqueda como registro canónico de metadatos y estados. |
 | 2026-10-27 | Seleccionar Elasticsearch como motor de búsqueda indexada | Adoptada | Sus funciones de texto completo, relevancia, filtros y resaltado se ajustan a la prueba; el volumen aún se medirá y PostgreSQL Full-Text Search queda como alternativa de menor complejidad. |
-| 2026-10-27 | Guardar originales y texto normalizado en almacenamiento separado: volumen Docker local para la kata y Cloudflare R2 en entornos desplegados | Adoptada para la estrategia de escalabilidad | Mantener los binarios fuera de PostgreSQL/Redis, con claves/checksum en PostgreSQL y una abstracción para evitar acoplar la lógica al proveedor. |
+| 2026-10-27 | Guardar originales y texto normalizado en almacenamiento separado: volumen Docker local para la kata y Cloudflare R2 en entornos desplegados | Superada por la decisión R2 del 2026-10-28 | Mantener los binarios fuera de PostgreSQL/Redis, con claves/checksum en PostgreSQL y una abstracción para evitar acoplar la lógica al proveedor. |
 | 2026-10-27 | Mantener la cola pendiente de Angular en memoria del navegador en la primera versión | Adoptada para alcance inicial | Los archivos no enviados podrían perderse al cerrar/recargar la pestaña; documentos ya aceptados se recuperan por sus IDs y estado del backend. |
 | 2026-10-27 | Definir objetivos de búsqueda como p95 ≤ 400 ms para backend y p95 ≤ 1.000 ms extremo a extremo | Propuesta pendiente de validar con el evaluador | El PDF da un rango de 400 ms a 1 s, pero no especifica percentil, puntos de inicio/fin ni condiciones de carga. |
 | 2026-10-27 | Medir búsqueda por etapas y con carga/dataset reproducibles | Adoptada como criterio de verificación | Los presupuestos por etapa son hipótesis; el cumplimiento se determina con latencia total y condiciones publicadas. |
 | 2026-10-27 | Documentar los flujos de carga, indexación, SSE, búsqueda y visualización en `docs/architecture.md` | Adoptada | Define responsabilidades entre Angular, NestJS, PostgreSQL, almacenamiento, BullMQ/Redis y Elasticsearch, además de fallos y recuperación. |
 | 2026-10-27 | Separar recepción de archivo de extracción e indexación | Adoptada para el diseño | El enunciado pide respuesta inicial inmediata, ID de seguimiento y procesamiento asíncrono. |
 | 2026-10-27 | Mantener la latencia de búsqueda separada del tiempo de carga | Adoptada para el diseño | El rango de 400 ms a 1 s se define para búsquedas; el procesamiento pesado debe ser asíncrono. |
+| 2026-10-28 | Adoptar Spartan NG + Tailwind CSS 4 sobre Angular 22, en lugar de Optimus UI | Adoptada | Spartan NG 1.8.3 soporta Angular >=21 <23, es MIT, accesible y no impone una versión fija; Optimus UI 2.x exige Angular 22.1.4+ y es un fork comunitario. |
+| 2026-10-28 | Aceptar DOCX y visualizarlo con `docx-preview`; extraer texto con `mammoth` en backend | Adoptada | `docx-editor` no tiene adaptador Angular (solo React/Vue), está orientado a edición y sus módulos Pro son comerciales; `docx-preview` cubre la visualización de solo lectura y `mammoth` la indexación. |
+| 2026-10-28 | Autenticación mínima con registro, inicio de sesión, cookie HttpOnly y API keys personales, sin roles | Adoptada | Cubre el acceso privado y el acceso programático sin construir RBAC; los roles quedan para una versión posterior. |
+| 2026-10-28 | i18n runtime español/inglés y temas claro/oscuro persistentes | Adoptada | Requisito del frontend; se implementa con diccionarios y variables CSS, no con el i18n build-time de Angular. |
+| 2026-10-28 | Añadir `descripción` a los metadatos y al índice de búsqueda | Adoptada | El frontend la incluye en el formulario y en los filtros; Elasticsearch la pondera junto con título y contenido. |
+| 2026-10-28 | Exponer `GET /api/documents/:id/content` para el visor, con `Range` o URL firmada | Adoptada | El texto normalizado no conserva la estructura de PDF/DOCX/Markdown; el visor necesita el original autorizado. |
+| 2026-10-28 | Ampliar `GET /api/search` con `sort`, `pageSize`, filtros tipados y facetas | Adoptada | El frontend requiere ordenamiento y filtros; el contrato anterior solo mencionaba paginación y highlights. |
+| 2026-10-28 | Descartar Tiptap para el visor DOCX de la v1; mantener `docx-preview` | Adoptada | Tiptap no tiene soporte Angular oficial (solo `ngx-tiptap`, comunitario) y su importación DOCX es Pro/comercial, beta y con conversión en la nube; para solo lectura, `docx-preview` es más simple y preserva mejor el layout. |
+| 2026-10-28 | El resaltado obligatorio es en los fragmentos de resultados; el resaltado dentro del visor DOCX es opcional y sin página exacta | Adoptada | HU-02/FE-005 piden highlights en los resultados; DOCX no tiene páginas estables en el archivo. Si se requiere deep-link, se usa una vista de texto extraído con `<mark>`. |
+| 2026-10-28 | Usar Cloudflare R2 como almacenamiento principal de originales y texto normalizado, en bucket privado y con URLs firmadas | Adoptada | Separa binarios de PostgreSQL/Redis, permite acceso compartido entre API y workers y evita discos locales; MinIO queda solo para tests offline. |

@@ -1,0 +1,11 @@
+node_modules/
+dist/
+out-tsc/
+coverage/
+.angular/
+.env
+.env.local
+*.log
+.tmp_pdf/
+.DS_Store
+Thumbs.db
