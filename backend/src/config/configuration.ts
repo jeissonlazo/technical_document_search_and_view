@@ -11,7 +11,8 @@ export default () => {
     directUrl: process.env.DIRECT_URL ?? '',
     redisUrl: process.env.REDIS_URL ?? 'redis://localhost:6379',
     elasticsearchNode: process.env.ELASTICSEARCH_NODE ?? 'http://localhost:9200',
-    elasticsearchIndex: process.env.ELASTICSEARCH_INDEX ?? 'documents-v1',
+    elasticsearchIndex: process.env.ELASTICSEARCH_INDEX ?? 'documents',
+    elasticsearchIndexVersion: process.env.ELASTICSEARCH_INDEX_VERSION ?? 'v1',
     elasticsearchApiKey: process.env.ELASTICSEARCH_API_KEY ?? '',
     sessionSecret: process.env.SESSION_SECRET ?? 'dev-only-change-me-please',
     sessionTtlSeconds: Number(process.env.SESSION_TTL_SECONDS ?? 604800),
@@ -31,5 +32,14 @@ export default () => {
       maxBatchTotalBytes: Number(process.env.MAX_BATCH_TOTAL_MB ?? 100) * 1024 * 1024,
     },
     workerConcurrency: Number(process.env.WORKER_CONCURRENCY ?? 2),
+    outbox: {
+      reconcileIntervalMs: Number(process.env.OUTBOX_RECONCILE_INTERVAL_MS ?? 15_000),
+      stuckAfterMs: Number(process.env.OUTBOX_STUCK_AFTER_MS ?? 120_000),
+      maxAttempts: Number(process.env.OUTBOX_MAX_ATTEMPTS ?? 10),
+    },
+    processing: {
+      maxTextChars: Number(process.env.MAX_TEXT_CHARS ?? 2_000_000),
+      timeoutMs: Number(process.env.PROCESSING_TIMEOUT_MS ?? 60_000),
+    },
   };
 };

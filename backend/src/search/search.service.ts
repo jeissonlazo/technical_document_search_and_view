@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { Client } from '@elastic/elasticsearch';
 import type { FacetBucket, SearchFacets, SearchHit, SearchResponse } from '@docs/shared';
 import { AppError } from '../common/app-error';
+import { DOCUMENT_INDEX_PROPERTIES } from './document-index.mapping';
 
 export interface IndexableDocument {
   id: string;
@@ -31,9 +32,11 @@ export class SearchService implements OnModuleInit {
   private readonly logger = new Logger(SearchService.name);
   private readonly client: Client;
   private readonly index: string;
+  private readonly indexVersion: string;
 
   constructor(config: ConfigService) {
     this.index = config.getOrThrow<string>('elasticsearchIndex');
+    this.indexVersion = config.get<string>('elasticsearchIndexVersion') ?? 'v1';
     const apiKey = config.get<string>('elasticsearchApiKey') ?? '';
     this.client = new Client({
       node: config.getOrThrow<string>('elasticsearchNode'),
@@ -54,41 +57,37 @@ export class SearchService implements OnModuleInit {
   }
 
   async ensureIndex(): Promise<void> {
-    const exists = await this.client.indices.exists({ index: this.index });
-    if (exists) return;
+    const aliasExists = await this.client.indices.existsAlias({ name: this.index });
+    if (aliasExists) {
+      await this.client.indices.putMapping({
+        index: this.index,
+        properties: DOCUMENT_INDEX_PROPERTIES as never,
+      });
+      return;
+    }
 
-    await this.client.indices.create({
-      index: this.index,
-      mappings: {
-        properties: {
-          title: {
-            type: 'text',
-            analyzer: 'spanish',
-            fields: { keyword: { type: 'keyword', ignore_above: 512 } },
-          },
-          description: { type: 'text', analyzer: 'spanish' },
-          content: { type: 'text', analyzer: 'spanish' },
-          author: {
-            type: 'text',
-            analyzer: 'spanish',
-            fields: { keyword: { type: 'keyword', ignore_above: 256 } },
-          },
-          category: { type: 'keyword' },
-          version: { type: 'keyword' },
-          tags: { type: 'keyword' },
-          userId: { type: 'keyword' },
-          status: { type: 'keyword' },
-          createdAt: { type: 'date' },
-        },
-      },
-    }).catch((error: unknown) => {
-      const name = (error as { name?: string }).name;
-      const message = error instanceof Error ? error.message : '';
-      if (name === 'resource_already_exists_exception' || message.includes('resource_already_exists_exception')) {
-        return;
-      }
-      throw error;
-    });
+    const concreteIndex = `${this.index}-${this.indexVersion}`;
+    const concreteExists = await this.client.indices.exists({ index: concreteIndex });
+    if (!concreteExists) {
+      await this.client.indices
+        .create({
+          index: concreteIndex,
+          mappings: { properties: DOCUMENT_INDEX_PROPERTIES as never },
+        })
+        .catch((error: unknown) => {
+          const name = (error as { name?: string }).name;
+          const message = error instanceof Error ? error.message : '';
+          if (
+            name === 'resource_already_exists_exception' ||
+            message.includes('resource_already_exists_exception')
+          ) {
+            return;
+          }
+          throw error;
+        });
+    }
+
+    await this.client.indices.putAlias({ index: concreteIndex, name: this.index });
   }
 
   async indexDocument(document: IndexableDocument, content: string): Promise<void> {
@@ -102,6 +101,9 @@ export class SearchService implements OnModuleInit {
           description: document.description ?? '',
           content,
           author: document.author ?? '',
+          metadata: [document.author, document.category, document.version, ...document.tags]
+            .filter((value): value is string => Boolean(value))
+            .join(' '),
           category: document.category ?? '',
           version: document.version ?? '',
           tags: document.tags,
@@ -150,7 +152,7 @@ export class SearchService implements OnModuleInit {
                 {
                   multi_match: {
                     query: params.q,
-                    fields: ['title^3', 'description^2', 'content'],
+                    fields: ['title^3', 'description^2', 'content', 'metadata^2'],
                     fuzziness: 'AUTO',
                   },
                 },

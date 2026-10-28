@@ -8,6 +8,7 @@ import { AuthModule } from './auth/auth.module';
 import { DocumentsModule } from './documents/documents.module';
 import { EventsModule } from './events/events.module';
 import { HealthController } from './health.controller';
+import { OutboxModule } from './outbox/outbox.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { QueueModule } from './queue/queue.module';
 import { RedisModule } from './redis/redis.module';
@@ -29,6 +30,7 @@ import { StorageModule } from './storage/storage.module';
     QueueModule,
     AuthModule,
     DocumentsModule,
+    OutboxModule,
     SearchModule,
     EventsModule,
   ],

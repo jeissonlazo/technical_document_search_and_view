@@ -4,7 +4,7 @@
 
 La aplicación permite cargar documentos técnicos, procesarlos e indexarlos en segundo plano, recibir cambios de estado en tiempo real, buscar por contenido y visualizar un documento. El diseño usa Angular + TypeScript (con Spartan NG y Tailwind CSS), NestJS + TypeScript, PostgreSQL, Elasticsearch, Redis + BullMQ y Server-Sent Events (SSE). Docker Compose coordina el entorno de desarrollo y demostración.
 
-Los estados persistidos del documento son `RECEIVED`, `PROCESSING`, `INDEXED` y `ERROR`, según `docs/decisiones-tecnicas.md`. Angular los presenta con etiquetas traducidas al español o al inglés. `PENDIENTE` y `SUBIENDO` pertenecen solamente a la cola temporal de Angular.
+Los estados persistidos del documento son `RECEIVED`, `PROCESSING`, `INDEXED` y `ERROR`, según `docs/decisiones-tecnicas.md`. La v1 crea los documentos directamente en `PROCESSING` para cumplir HU-01 y conserva `RECEIVED` por compatibilidad. Angular los presenta con etiquetas traducidas al español o al inglés. `PENDIENTE` y `SUBIENDO` pertenecen solamente a la cola temporal de Angular.
 
 ## Razones del stack elegido
 
@@ -30,7 +30,7 @@ flowchart LR
     A -->|POST /api/documents: un archivo| API[NestJS API]
     API --> V[Validar formato, tamaño y metadatos]
     V -->|Original| OS[(Cloudflare R2<br/>bucket privado)]
-    V -->|Registro + RECEIVED| PG[(PostgreSQL<br/>fuente de verdad)]
+    V -->|Registro + PROCESSING| PG[(PostgreSQL<br/>fuente de verdad)]
     API -->|Encolar ID del documento| R[(Redis + BullMQ)]
     API -->|202 Accepted + ID| A
     R --> W[Worker NestJS]
@@ -58,7 +58,7 @@ flowchart LR
 2. Angular envía cada archivo y sus metadatos a `POST /api/documents` como `multipart/form-data`.
 3. NestJS valida autorización, formato real, tamaño, nombre de archivo, campos y metadatos. Se aceptan TXT UTF-8, Markdown UTF-8 y PDF con texto extraíble. DOCX no es requisito de la v1; el código existente lo admite como soporte opcional. El nombre se normaliza y se rechazan rutas, caracteres de control, nombres reservados y longitudes excesivas; la clave de R2 usa UUID y extensión, no el nombre original. No se hace OCR en esta versión.
 4. El backend conserva el original en Cloudflare R2 mediante AWS SDK para JavaScript y endpoint compatible con S3, detrás de una interfaz de almacenamiento. El bucket es privado; para tests offline se puede usar MinIO con la misma interfaz.
-5. PostgreSQL registra metadatos, clave de objeto estable, tamaño, MIME, checksum y estado inicial `RECEIVED`. La solicitud devuelve `202 Accepted` con el ID del documento solo cuando archivo y trabajo quedaron aceptados de forma recuperable.
+5. PostgreSQL registra metadatos, clave de objeto estable, tamaño, MIME, checksum y estado inicial `PROCESSING`. La solicitud devuelve `202 Accepted` con `trackingId` solo cuando archivo y trabajo quedaron aceptados de forma recuperable.
 6. NestJS publica en BullMQ un trabajo que contiene el ID del documento y referencias necesarias, no los bytes del archivo. El estado pasa a `PROCESSING` mientras el trabajo espera o está activo. Si se implementa transactional outbox, el evento pendiente se escribe en PostgreSQL dentro de la misma transacción del registro; un dispatcher lo publica a Redis.
 7. El worker recupera el archivo, extrae y normaliza texto, y guarda el texto con una clave de objeto estable para que el visor pueda leerlo y el índice pueda reconstruirse. El original se conserva según la política de retención.
 8. El worker envía a Elasticsearch una proyección con el texto indexable, título, descripción, metadatos, etiquetas, versión e identificador estable. El trabajo debe ser idempotente, usando el ID del documento como clave para que un reintento no duplique resultados.
@@ -68,8 +68,8 @@ flowchart LR
 ### Fallos y consistencia
 
 - PostgreSQL es la fuente de verdad para metadatos y estado. Elasticsearch es un índice derivado que se puede reconstruir a partir del contenido conservado.
-- Almacenar el archivo y publicar el trabajo en Redis son operaciones entre sistemas distintos y no forman una transacción distribuida. Si se necesita garantizar la publicación tras una caída entre ambas operaciones, implementar transactional outbox. Para un prototipo sin outbox, añadir compensación y reconciliación que detecten documentos atascados en `RECEIVED`/`PROCESSING` y objetos sin registro.
-- Si el almacenamiento falla antes de que la API acepte la carga, responder con error y no crear un documento procesable. Si falla la publicación del trabajo después de guardar el registro, no dejarlo indefinidamente en `RECEIVED` o `PROCESSING`; recuperar mediante outbox o marcar error recuperable y permitir reintento.
+- Almacenar el archivo y publicar el trabajo en Redis son operaciones entre sistemas distintos y no forman una transacción distribuida. Si se necesita garantizar la publicación tras una caída entre ambas operaciones, implementar transactional outbox. Para un prototipo sin outbox, añadir compensación y reconciliación que detecten documentos atascados en `PROCESSING` y objetos sin registro.
+- Si el almacenamiento falla antes de que la API acepte la carga, responder con error y no crear un documento procesable. Si falla la publicación del trabajo después de guardar el registro, no dejarlo indefinidamente en `PROCESSING`; recuperar mediante outbox o marcar error recuperable y permitir reintento.
 - BullMQ puede volver a ejecutar trabajos; extracción, escritura del texto normalizado e indexación deben ser idempotentes. Limitar reintentos, registrar el último error y permitir reintento individual.
 - No marcar `INDEXED` hasta que Elasticsearch confirme el documento. Si la actualización de estado en PostgreSQL falla después de indexar, la reconciliación debe completar el estado sin crear duplicados.
 - PDF protegido, corrupto o sin texto extraíble termina en `ERROR` con código y mensaje comprensibles. El worker continúa con los demás trabajos y Angular continúa con los archivos restantes.
@@ -98,7 +98,7 @@ Al agotarse los reintentos, el documento termina en `ERROR` con código y causa 
 ### Progreso y resumen del lote
 
 - Para cada archivo, la UI muestra nombre, estado de transferencia/procesamiento, mensaje y si existe acción de reintento.
-- Estados como `PENDIENTE` y `SUBIENDO` pertenecen al frontend; el backend persiste `RECEIVED`, `PROCESSING`, `INDEXED` o `ERROR`.
+- Estados como `PENDIENTE` y `SUBIENDO` pertenecen al frontend; el backend persiste `PROCESSING`, `INDEXED` o `ERROR` en la v1 (`RECEIVED` se conserva por compatibilidad).
 - La UI presenta un contador de indexados, fallidos y pendientes/procesándose. El lote queda “completo” cuando cada archivo terminó en `INDEXED` o `ERROR`, incluyendo fallos locales de archivos que el servidor rechazó antes de crear un documento.
 - Los errores usan códigos estables y reportan etapa, mensaje seguro, `retryable` y referencia de soporte. La UI no muestra trazas ni detalles internos.
 - Ejemplo de resumen: “2 indexados · 3 fallidos”, con una fila por documento y su motivo concreto. La falla de `informe.pdf`, por ejemplo, no detiene `manual.pdf`, `notas.md` ni los otros archivos.
@@ -264,7 +264,7 @@ El sistema aplica backpressure y límites configurables para tamaño por archivo
 | `POST /api/api-keys` | Crear API key personal | Clave completa una sola vez, prefijo e identificador. |
 | `GET /api/api-keys` | Listar API keys | Prefijo, nombre, último uso y expiración; nunca la clave completa. |
 | `DELETE /api/api-keys/:id` | Revocar API key | Confirmación. |
-| `POST /api/documents` | Recibir un archivo y metadatos | `202 Accepted`, `documentId`, estado inicial `RECEIVED` (o `PROCESSING` si se alinea con HU-01). |
+| `POST /api/documents` | Recibir un archivo y metadatos | `202 Accepted` con `trackingId` y estado inicial `PROCESSING`. |
 | `POST /api/documents/batch` | Recibir varios archivos y un arreglo de metadatos alineado | `202 Accepted` con `total`, `accepted`, `failed` y resultados por archivo. |
 | `GET /api/documents/:id` | Consultar metadatos, estado y texto normalizado | Documento, estado y detalle de error opcional. |
 | `GET /api/documents/:id/content` | Obtener el original para el visor, con `Range` | Binario autorizado o redirección a URL firmada de corta duración. |
@@ -275,7 +275,7 @@ Los nombres de rutas son una propuesta para el diseño; se pueden ajustar al imp
 
 ## Criterios de aceptación
 
-- La carga devuelve ID y estado inicial (`RECEIVED`, presentado como “Procesando” en la UI, o `PROCESSING` si se alinea con HU-01) sin esperar a extracción/indexación y solo tras aceptar archivo y trabajo de forma recuperable; el backend transiciona a `PROCESSING` durante cola/procesamiento.
+- La carga devuelve `trackingId` y estado inicial `PROCESSING` sin esperar a extracción/indexación y solo tras aceptar archivo y trabajo de forma recuperable; el backend mantiene `PROCESSING` durante cola/procesamiento y termina en `INDEXED` o `ERROR`.
 - Angular envía los archivos de la cola de uno en uno; un archivo con error no bloquea los siguientes.
 - El resumen del lote reporta cantidades de documentos indexados, fallidos y todavía procesándose, con causa y recuperabilidad por archivo.
 - Originales y contenido normalizado quedan almacenados de forma persistente según la estrategia del entorno; PostgreSQL conserva metadatos/estado y Elasticsearch la proyección de búsqueda.
@@ -299,7 +299,7 @@ Los nombres de rutas son una propuesta para el diseño; se pueden ajustar al imp
 - [ ] Elegir transactional outbox o definir formalmente el alcance del mecanismo de compensación/reconciliación para PostgreSQL y Redis.
 - [ ] Configurar proxy/balanceador para streaming SSE y aplicar el contrato de evento y Pub/Sub compartido cuando existan varias instancias; la autenticación SSE ya está resuelta por cookie.
 - [ ] Definir formato del contenido normalizado y política de retención/versionado de originales y texto normalizado en Cloudflare R2.
-- [ ] Alinear el estado inicial con HU-01: devolver `PROCESSING` en el `202` o documentar formalmente el mapeo de `RECEIVED` a “Procesando” en la UI.
+- [x] Alinear el estado inicial con HU-01: devolver `PROCESSING` en el `202` y exponer `trackingId` en la respuesta.
 - [ ] Definir el modo de registro (abierto, por invitación o por bandera de entorno) y la política de verificación de email/recuperación de contraseña.
 - [ ] Validar la fidelidad de `docx-preview` solo si se decide mantener DOCX como soporte opcional.
 - [ ] Si se añade edición DOCX, evaluar Tiptap + Import DOCX (Pro/cloud) frente a `docx-editor`, incluyendo coste, licencia y privacidad.

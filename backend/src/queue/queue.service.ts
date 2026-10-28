@@ -19,4 +19,9 @@ export class QueueService {
       },
     );
   }
+
+  async hasPendingJob(documentId: string): Promise<boolean> {
+    const jobs = await this.queue.getJobs(['waiting', 'active', 'delayed'], 0, 500, true);
+    return jobs.some((job) => job?.data?.documentId === documentId);
+  }
 }

@@ -37,8 +37,13 @@ describe('DocumentProcessor', () => {
       },
     };
     storage = {
-      get: jest.fn().mockResolvedValue({
-        body: Readable.from([Buffer.from('contenido de prueba')]),
+      get: jest.fn((key: string) => {
+        if (key === document.normalizedTextKey) {
+          return Promise.reject(new Error('normalized no existe'));
+        }
+        return Promise.resolve({
+          body: Readable.from([Buffer.from('contenido de prueba')]),
+        });
       }),
       put: jest.fn().mockResolvedValue(undefined),
     };
@@ -57,6 +62,7 @@ describe('DocumentProcessor', () => {
       search as never,
       events as never,
       storage as never,
+      { get: () => 60_000 } as never,
     );
   });
 
@@ -115,6 +121,23 @@ describe('DocumentProcessor', () => {
       where: { id: 'doc-1' },
       data: expect.objectContaining({ status: 'ERROR', errorCode: 'INDEXING_FAILED' }),
     });
+  });
+
+  it('reutiliza normalized.txt en un reintento', async () => {
+    storage.get.mockImplementation((key: string) => {
+      if (key === document.normalizedTextKey) {
+        return Promise.resolve({ body: Readable.from([Buffer.from('texto ya normalizado')]) });
+      }
+      return Promise.reject(new Error('no debería leer el original'));
+    });
+
+    await processor.process(job(1));
+
+    expect(extraction.extract).not.toHaveBeenCalled();
+    expect(search.indexDocument).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'doc-1' }),
+      'texto ya normalizado',
+    );
   });
 
   it('indexa y publica INDEXED en el camino feliz', async () => {

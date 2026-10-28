@@ -50,7 +50,8 @@ model Document {
   version           String?
   tags              String[]       @default([])
   originalFilename  String?
-  status            DocumentStatus @default(RECEIVED)
+  idempotencyKey    String?
+  status            DocumentStatus @default(PROCESSING)
   mime              String
   size              Int
   checksum          String
@@ -63,7 +64,29 @@ model Document {
   updatedAt         DateTime       @updatedAt
   indexedAt         DateTime?
   user              User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  outboxEvents      OutboxEvent[]
 
+  @@unique([userId, idempotencyKey])
   @@index([userId, status])
   @@index([checksum])
+}
+
+enum OutboxStatus {
+  PENDING
+  PUBLISHED
+}
+
+model OutboxEvent {
+  id          String       @id @default(uuid())
+  documentId  String
+  status      OutboxStatus @default(PENDING)
+  attempts    Int          @default(0)
+  availableAt DateTime     @default(now())
+  lastError   String?
+  createdAt   DateTime     @default(now())
+  processedAt DateTime?
+  document    Document     @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@index([status, availableAt])
+  @@index([documentId])
 }

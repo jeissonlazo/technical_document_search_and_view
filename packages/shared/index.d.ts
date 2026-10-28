@@ -13,6 +13,7 @@ export interface AuthUser {
 
 export interface DocumentMetadata {
   id: string;
+  trackingId: string;
   title: string;
   description?: string | null;
   author?: string | null;

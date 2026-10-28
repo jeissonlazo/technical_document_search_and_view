@@ -64,7 +64,7 @@ La validación se realizó en dos niveles:
 
 1. **Decisiones de producto y arquitectura:** el candidato confirmó el uso de R2, la autenticación mínima con sign up/sign in y API keys, y Spartan NG. La IA propuso alternativas y señaló riesgos, pero las decisiones finales fueron humanas.
 2. **Revisión técnica:** se contrastaron las afirmaciones sobre librerías con su documentación pública y se corrigieron puntos como:
-   - el estado inicial `RECEIVED` frente a `PROCESANDO` de HU-01;
+   - el estado inicial `PROCESSING` frente a `RECEIVED` heredado de la arquitectura anterior (resuelto a favor de HU-01);
    - el resaltado obligatorio en fragmentos de resultados frente al resaltado dentro del visor DOCX;
    - el alcance de DOCX y la conveniencia de `docx-preview` frente a un editor WYSIWYG;
    - la compatibilidad de Spartan NG con Angular 22 y el riesgo del CLI.

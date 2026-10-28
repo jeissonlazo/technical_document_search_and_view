@@ -12,8 +12,8 @@ import type {
 import { plainToInstance } from 'class-transformer';
 import { validate, type ValidationError } from 'class-validator';
 import { AppError } from '../common/app-error';
+import { OutboxService } from '../outbox/outbox.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { QueueService } from '../queue/queue.service';
 import { OBJECT_STORAGE, type ObjectStorage, type StoredObject } from '../storage/storage.types';
 import { CreateDocumentDto } from './documents.dto';
 
@@ -24,7 +24,7 @@ export class DocumentsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
-    private readonly queue: QueueService,
+    private readonly outbox: OutboxService,
     @Inject(OBJECT_STORAGE) private readonly storage: ObjectStorage,
   ) {}
 
@@ -32,7 +32,16 @@ export class DocumentsService {
     userId: string,
     file: Express.Multer.File | undefined,
     dto: CreateDocumentDto,
+    idempotencyKey?: string,
   ): Promise<DocumentMetadata> {
+    const key = idempotencyKey ? validateIdempotencyKey(idempotencyKey) : null;
+    if (key) {
+      const existing = await this.prisma.document.findUnique({
+        where: { userId_idempotencyKey: { userId, idempotencyKey: key } },
+      });
+      if (existing) return toMetadata(existing);
+    }
+
     if (!file) {
       throw new AppError('FILE_REQUIRED', 'No se recibió ningún archivo.', 422, false);
     }
@@ -75,47 +84,51 @@ export class DocumentsService {
 
     let document: PrismaDocument;
     try {
-      document = await this.prisma.document.create({
-        data: {
-          id: documentId,
-          userId,
-          title: dto.title.trim(),
-          description: dto.description?.trim() || null,
-          author: dto.author?.trim() || null,
-          category: dto.category?.trim() || null,
-          version: dto.version?.trim() || null,
-          tags: splitTags(dto.tags),
-          originalFilename,
-          mime,
-          size: file.size,
-          checksum,
-          bucket,
-          objectKey,
-          normalizedTextKey,
-        },
+      document = await this.prisma.$transaction(async (tx) => {
+        const created = await tx.document.create({
+          data: {
+            id: documentId,
+            userId,
+            title: dto.title.trim(),
+            description: dto.description?.trim() || null,
+            author: dto.author?.trim() || null,
+            category: dto.category?.trim() || null,
+            version: dto.version?.trim() || null,
+            tags: splitTags(dto.tags),
+            originalFilename,
+            idempotencyKey: key,
+            mime,
+            size: file.size,
+            checksum,
+            bucket,
+            objectKey,
+            normalizedTextKey,
+            status: 'PROCESSING',
+          },
+        });
+
+        await tx.outboxEvent.create({ data: { documentId: created.id } });
+        return created;
       });
     } catch (error) {
       await this.storage.delete(objectKey);
+
+      // Dos cargas concurrentes con la misma Idempotency-Key: gana la primera.
+      if (key && (error as { code?: string }).code === 'P2002') {
+        const existing = await this.prisma.document.findUnique({
+          where: { userId_idempotencyKey: { userId, idempotencyKey: key } },
+        });
+        if (existing) return toMetadata(existing);
+      }
+
       throw error;
     }
 
+    // El outbox ya es durable. Si Redis está caído, el reconciliador lo publicará.
     try {
-      await this.queue.enqueue(document.id);
+      await this.outbox.dispatchDocument(document.id);
     } catch {
-      await this.prisma.document.update({
-        where: { id: document.id },
-        data: {
-          status: 'ERROR',
-          errorCode: 'QUEUE_UNAVAILABLE',
-          errorMessage: 'No se pudo iniciar el procesamiento.',
-        },
-      });
-      throw new AppError(
-        'QUEUE_UNAVAILABLE',
-        'No se pudo iniciar el procesamiento. Intenta de nuevo.',
-        503,
-        true,
-      );
+      // El evento queda PENDING; no se bloquea la respuesta inicial.
     }
 
     return toMetadata(document);
@@ -242,16 +255,26 @@ export class DocumentsService {
       throw new AppError('INVALID_STATE', 'Solo se pueden reintentar documentos en error.', 409, false);
     }
 
-    const updated = await this.prisma.document.update({
-      where: { id: document.id },
-      data: {
-        status: 'RECEIVED',
-        errorCode: null,
-        errorMessage: null,
-      },
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const doc = await tx.document.update({
+        where: { id: document.id },
+        data: {
+          status: 'PROCESSING',
+          errorCode: null,
+          errorMessage: null,
+          indexedAt: null,
+        },
+      });
+      await tx.outboxEvent.create({ data: { documentId: doc.id } });
+      return doc;
     });
 
-    await this.queue.enqueue(document.id, `${document.id}:${Date.now()}`);
+    try {
+      await this.outbox.dispatchDocument(updated.id);
+    } catch {
+      // El reconciliador reintentará la publicación.
+    }
+
     return toMetadata(updated);
   }
 
@@ -364,6 +387,19 @@ const RESERVED_FILENAMES = new Set([
   'LPT9',
 ]);
 
+function validateIdempotencyKey(raw: string): string {
+  const key = raw.trim();
+  if (key.length < 8 || key.length > 128 || !/^[A-Za-z0-9._:-]+$/.test(key)) {
+    throw new AppError(
+      'INVALID_IDEMPOTENCY_KEY',
+      'El encabezado Idempotency-Key debe tener entre 8 y 128 caracteres seguros.',
+      400,
+      false,
+    );
+  }
+  return key;
+}
+
 export function validateFilename(raw: string): string {
   const filename = (raw ?? '').normalize('NFC').trim();
 
@@ -453,6 +489,7 @@ function mimeForExtension(extension: string): string {
 export function toMetadata(document: PrismaDocument): DocumentMetadata {
   return {
     id: document.id,
+    trackingId: document.id,
     title: document.title,
     description: document.description,
     author: document.author,

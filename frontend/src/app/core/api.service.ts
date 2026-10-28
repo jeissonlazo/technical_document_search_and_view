@@ -52,6 +52,7 @@ export class ApiService {
     file: File,
     metadata: UploadMetadata,
     onProgress?: (percent: number) => void,
+    idempotencyKey?: string,
   ): Promise<DocumentMetadata> {
     const form = new FormData();
     form.append('file', file, file.name);
@@ -67,6 +68,7 @@ export class ApiService {
         .post<DocumentMetadata>('/api/documents', form, {
           reportProgress: true,
           observe: 'events',
+          headers: idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : undefined,
         })
         .pipe(
           tap((event) => {

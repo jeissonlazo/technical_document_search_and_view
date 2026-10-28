@@ -12,16 +12,17 @@ El soporte opcional DOCX acepta documentos de Word 2007+ sin cifrado ni macros. 
 
 ## Ciclo de estados y errores del documento
 
-Los estados persistidos del backend son `RECEIVED`, `PROCESSING`, `INDEXED` y `ERROR`; Angular los presenta con etiquetas traducidas al español o al inglés (`Recibido`/`Received`, `Procesando`/`Processing`, `Indexado`/`Indexed`, `Error`/`Error`). `PENDIENTE` y `SUBIENDO` son estados transitorios de la cola del frontend y no se persisten como estado del documento.
+Los estados persistidos del backend son `RECEIVED`, `PROCESSING`, `INDEXED` y `ERROR`; la v1 crea los documentos directamente en `PROCESSING` y conserva `RECEIVED` por compatibilidad. Angular los presenta con etiquetas traducidas al español o al inglés (`Recibido`/`Received`, `Procesando`/`Processing`, `Indexado`/`Indexed`, `Error`/`Error`). `PENDIENTE` y `SUBIENDO` son estados transitorios de la cola del frontend y no se persisten como estado del documento.
 
 | Estado | Significado | Transiciones permitidas |
 | --- | --- | --- |
-| `RECEIVED` | El backend recibió y validó el archivo, lo almacenó y creó el registro. Estado inicial devuelto por la API (o `PROCESSING` si se alinea con HU-01). | `PROCESSING` cuando el trabajo entra en cola/worker; `ERROR` si un fallo definitivo impide continuar. |
+| `RECEIVED` | El backend recibió y validó el archivo, lo almacenó y creó el registro. Se conserva por compatibilidad; la v1 no lo usa como estado inicial. | `PROCESSING` cuando el trabajo entra en cola/worker; `ERROR` si un fallo definitivo impide continuar. |
+| `PROCESSING` | Estado inicial devuelto por el `202`; el archivo fue aceptado y el trabajo está en cola o ejecutándose. | `INDEXED` al completar extracción e indexación; `ERROR` si se agotan los reintentos o el fallo es permanente. |
 | `PROCESSING` | El trabajo está en cola, extrayendo texto o indexando. Los reintentos transitorios mantienen este estado. | `INDEXED` si Elasticsearch confirma la indexación; `ERROR` ante fallo permanente o agotamiento de intentos. |
 | `INDEXED` | El texto y metadatos quedaron disponibles para búsqueda y visualización. | Estado terminal. |
 | `ERROR` | Fallo definitivo o intentos agotados. Se conserva registro, código y causa; el documento no está disponible en el índice. | Estado terminal. Un reintento manual autorizado crea un nuevo intento y vuelve a `RECEIVED`/`PROCESSING`, conservando historial del intento anterior. |
 
-La aceptación de la subida no garantiza que el documento vaya a indexarse: al guardar el archivo, el backend crea `RECEIVED` y devuelve un ID de seguimiento; el procesamiento asíncrono determina el estado final. Si el fallo ocurre antes de que el backend acepte el archivo (por ejemplo, una desconexión durante la transferencia), el frontend marca ese elemento como fallido localmente, muestra el error y sigue con el siguiente. No se crea un estado persistido para un archivo que nunca fue aceptado.
+La aceptación de la subida no garantiza que el documento vaya a indexarse: al guardar el archivo, el backend crea `PROCESSING` y devuelve un identificador de seguimiento; el procesamiento asíncrono determina el estado final. Si el fallo ocurre antes de que el backend acepte el archivo (por ejemplo, una desconexión durante la transferencia), el frontend marca ese elemento como fallido localmente, muestra el error y sigue con el siguiente. No se crea un estado persistido para un archivo que nunca fue aceptado.
 
 ### Catálogo de errores y mensajes visibles
 
@@ -78,7 +79,7 @@ La subida sigue siendo secuencial hasta que cada archivo obtiene respuesta del b
 
 Para una carga masiva, el frontend administra una cola con un máximo configurable y envía los archivos secuencialmente: no inicia la subida de un archivo hasta que la subida del anterior haya terminado y el backend haya respondido. El valor numérico máximo queda pendiente de pruebas. El tamaño por archivo, la tasa de entrada, el almacenamiento y los recursos disponibles también requieren controles.
 
-La respuesta del backend confirma la recepción del archivo, devuelve un identificador de seguimiento y el estado inicial `RECEIVED`. El documento pasa a `PROCESSING` mientras espera en cola o se extrae/indexa; estos trabajos siguen en segundo plano y pueden continuar mientras Angular sube el siguiente archivo. Por tanto, “terminó la subida” significa que el backend aceptó y confirmó ese archivo, no que terminó su indexación. Los estados terminales son `INDEXED` y `ERROR`.
+La respuesta del backend confirma la recepción del archivo, devuelve un `trackingId` y el estado inicial `PROCESSING`. El documento permanece en `PROCESSING` mientras espera en cola o se extrae/indexa; estos trabajos siguen en segundo plano y pueden continuar mientras Angular sube el siguiente archivo. Por tanto, “terminó la subida” significa que el backend aceptó y confirmó ese archivo, no que terminó su indexación. Los estados terminales son `INDEXED` y `ERROR`.
 
 La carga y la indexación no forman parte de la latencia de una búsqueda. La interpretación propuesta del rango indicado por la prueba separa la latencia del backend del tiempo percibido en la interfaz; esta interpretación debe validarse con el evaluador porque el PDF no define percentiles ni condiciones de medida.
 
@@ -198,7 +199,7 @@ El tiempo disponible para la kata es de un día. Elasticsearch aumenta la cantid
 - BullMQ controla el procesamiento en backend. Su concurrencia se configura de forma independiente a la subida; el trabajador puede indexar documentos aceptados mientras Angular sigue enviando archivos.
 - PostgreSQL es la fuente de verdad del estado. Elasticsearch es un índice reconstruible; el resultado se marca `INDEXED` solo después de que la indexación haya terminado correctamente.
 - Los trabajos de BullMQ deben ser idempotentes y usar el ID del documento para evitar efectos duplicados ante reintentos o recuperación de trabajos.
-- Si no se logra guardar el trabajo en Redis después de crear el documento, el backend no debe dejarlo indefinidamente en `RECEIVED` o `PROCESSING`: debe compensar la operación o marcar un error recuperable y registrarlo.
+- Si no se logra guardar el trabajo en Redis después de crear el documento, el backend no debe dejarlo indefinidamente en `PROCESSING`: debe compensar la operación o marcar un error recuperable y registrarlo.
 - La cola seleccionada en Angular vive en el navegador en esta versión. Si se cierra o recarga la pestaña, los archivos todavía no enviados pueden perderse; los ya aceptados se recuperan consultando sus IDs en backend. La persistencia/reanudación de la cola queda fuera del alcance inicial.
 - El frontend usa Angular 22 + Spartan NG + Tailwind 4; los componentes helm se copian y versionan con el proyecto. No se usa Optimus UI ni un editor DOCX.
 - Los DOCX se validan como ZIP, se limitan en tamaño/descompresión y se extraen con `mammoth`; el visor `docx-preview` es solo lectura.
@@ -238,13 +239,13 @@ Antes de fijar límites de producción, recoger o acordar estos datos:
 1. El usuario selecciona uno o muchos documentos; el frontend agrega sus referencias a una cola y presenta el progreso.
 2. El frontend toma el siguiente archivo pendiente, valida lo que pueda localmente y lo envía; no inicia la subida del siguiente hasta recibir la respuesta de aceptación o error de este archivo.
 3. El backend valida autenticación/autorización, metadatos, tipo real y tamaño durante streaming; no confía solo en `Content-Length`, el MIME declarado o la extensión.
-4. El backend guarda el archivo de forma segura y crea el registro `RECEIVED`.
-5. El backend encola el trabajo recuperable y responde con `202 Accepted`, un ID de seguimiento y estado `RECEIVED` (o `PROCESSING` si se alinea con HU-01). Esta respuesta termina la subida para el frontend; no implica que la indexación terminó.
+4. El backend guarda el archivo de forma segura y crea el registro `PROCESSING`.
+5. El backend encola el trabajo recuperable y responde con `202 Accepted`, un `trackingId` y estado `PROCESSING`. Esta respuesta termina la subida para el frontend; no implica que la indexación terminó.
 6. Tras la confirmación, el frontend actualiza el progreso y comienza la subida del siguiente archivo; el backend extrae texto e indexa en segundo plano, con límites de recursos y fallos aislados por documento. Si la extracción del PDF no produce texto útil o el DOCX es corrupto/cifrado, marca ese documento `ERROR` y continúa el lote.
 7. El backend cambia a `PROCESSING` mientras el trabajo esté en cola o activo, y luego a `INDEXED` o `ERROR`; emite los eventos de tiempo real correspondientes.
 8. El frontend puede consultar el estado por ID o recibir eventos para recuperar el resultado tras desconexiones.
 
-No se debe confirmar `RECEIVED` si el archivo o la tarea no quedaron guardados de forma que el proceso pueda recuperarlos. Definir limpieza para cargas parciales, archivos temporales y tareas fallidas.
+No se debe confirmar `PROCESSING` si el archivo o la tarea no quedaron guardados de forma que el proceso pueda recuperarlos. Definir limpieza para cargas parciales, archivos temporales y tareas fallidas.
 
 ## Decisiones pendientes
 
@@ -268,12 +269,12 @@ No se debe confirmar `RECEIVED` si el archivo o la tarea no quedaron guardados d
 - [ ] Validar la fidelidad de `docx-preview` con DOCX representativos y documentar limitaciones.
 - [ ] Si se añade edición DOCX, evaluar Tiptap + Import DOCX (Pro/cloud) frente a `docx-editor`, incluyendo coste, licencia y privacidad.
 - [ ] Definir la política de actualización de los componentes helm de Spartan NG y la estrategia de i18n (servicio propio o Transloco).
-- [ ] Alinear el estado inicial con HU-01: devolver `PROCESSING` en el `202` o documentar formalmente el mapeo de `RECEIVED` a “Procesando” en la UI.
+- [x] Alinear el estado inicial con HU-01: devolver `PROCESSING` en el `202` y exponer `trackingId` en la respuesta.
 
 ## Criterios de aceptación para la carga
 
 - La API rechaza formatos, tamaños y metadatos inválidos con errores comprensibles.
-- La respuesta inicial no espera a que termine la extracción/indexación e incluye un ID y estado inicial (`RECEIVED`, presentado como “Procesando”, o `PROCESSING` si se alinea con HU-01); el documento pasa a `PROCESSING` mientras el job está en cola o activo.
+- La respuesta inicial no espera a que termine la extracción/indexación e incluye `trackingId` y estado inicial `PROCESSING`; el documento permanece en `PROCESSING` mientras el job está en cola o activo y termina en `INDEXED` o `ERROR`.
 - Se actualiza el estado final a `INDEXED` o `ERROR` y se notifica al frontend con un código y mensaje comprensible cuando hay error.
 - El frontend sube un solo archivo a la vez por lote y no inicia el siguiente hasta recibir la respuesta del backend para el actual.
 - La cantidad máxima del lote es configurable y se valida; el progreso y los errores se muestran por archivo.
@@ -304,7 +305,8 @@ No se debe confirmar `RECEIVED` si el archivo o la tarea no quedaron guardados d
 | 2026-10-27 | La cantidad de archivos por lote tendrá un máximo configurable; Angular administra la cola y sube secuencialmente | Adoptada, valor pendiente | El siguiente archivo empieza solo cuando termina la subida y el backend confirma el anterior; el límite se fijará con pruebas de capacidad. |
 | 2026-10-27 | La confirmación de subida es independiente de la finalización de indexación | Adoptada | El backend acepta cada documento y lo procesa de forma asíncrona; la indexación puede continuar mientras el frontend sube el siguiente. |
 | 2026-10-27 | Aceptar TXT UTF-8, Markdown UTF-8 y PDF con texto extraíble; no incluir OCR en el alcance inicial | Superada por la decisión DOCX del 2026-10-28 | Mantiene el procesamiento acotado para la kata. Un PDF sin texto útil se marca `ERROR` con causa y no bloquea la cola. |
-| 2026-10-27 | Persistir `RECEIVED`, `PROCESSING`, `INDEXED` y `ERROR`; mantener `PENDIENTE`/`SUBIENDO` en frontend | Adoptada; etiquetas actualizadas a es/en el 2026-10-28 | Distingue recepción durable, procesamiento y estados terminales; Angular presenta etiquetas traducidas. |
+| 2026-10-27 | Persistir `RECEIVED`, `PROCESSING`, `INDEXED` y `ERROR`; mantener `PENDIENTE`/`SUBIENDO` en frontend | Adoptada; `PROCESSING` es el inicial desde el 2026-10-28 | Distingue recepción durable, procesamiento y estados terminales; Angular presenta etiquetas traducidas. |
+| 2026-10-28 | Crear los documentos en `PROCESSING` y devolver `trackingId` en el `202` | Adoptada | Alinea la respuesta con HU-01: el cliente recibe un identificador de seguimiento inmediato y no espera la indexación; `RECEIVED` se conserva por compatibilidad. |
 | 2026-10-27 | Aislar errores por archivo y continuar automáticamente la cola | Adoptada | Un archivo fallido no impide la carga de los siguientes; se muestra la causa y se ofrece reintento individual cuando aplique. |
 | 2026-10-27 | Tratar un lote como operación de UI con una solicitud individual por archivo | Adoptada | Angular mantiene una sola cola secuencial; NestJS/BullMQ ejecutan y reportan cada documento independientemente. |
 | 2026-10-27 | Reintentar errores transitorios hasta 3 veces adicionales con backoff exponencial y jitter | Adoptada | Equivale a un máximo de 4 intentos totales; validación y fallos permanentes de lectura no se reintentan automáticamente. |

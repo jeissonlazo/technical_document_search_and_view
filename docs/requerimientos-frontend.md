@@ -140,12 +140,12 @@ La API puede exponer `POST /api/documents/batch` para clientes externos, pero An
 
 **FE-024.** El sistema deberá mostrar el estado individual de cada documento:
 
-- `RECEIVED`
-- `PROCESSING`
+- `PROCESSING` (estado inicial del `202`)
+- `RECEIVED` (compatibilidad; no se usa como estado inicial en la v1)
 - `INDEXED`
 - `ERROR`
 
-Si el backend conserva `RECEIVED` como estado inicial, la interfaz lo presentará como “Procesando” para cumplir HU-01; alternativamente, el `202` devolverá `PROCESSING`.
+El backend devuelve `PROCESSING` como estado inicial y `trackingId` en la respuesta de carga.
 
 **FE-025.** El fallo de un archivo no deberá cancelar automáticamente el resto del lote.
 

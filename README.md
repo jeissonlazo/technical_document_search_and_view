@@ -358,7 +358,7 @@ curl -X POST http://localhost:4200/api/documents \
   -F "version=1.0"
 ```
 
-Respuesta: `202 Accepted` con el documento en `RECEIVED` y su `contentUrl`.
+Respuesta: `202 Accepted` con `trackingId`, estado inicial `PROCESSING` y `contentUrl`. La extracción/indexación continúa en segundo plano.
 
 ### Carga múltiple
 
@@ -389,7 +389,7 @@ Límites: 20 archivos, 25 MB por archivo y 100 MB totales por defecto. Angular *
 ## 10. Flujo de carga
 
 1. Angular envía un archivo a la vez por lote con `multipart/form-data`.
-2. NestJS valida formato/tamaño, calcula SHA-256, sube el original a R2 y crea el registro `RECEIVED`.
+2. NestJS valida formato/tamaño, calcula SHA-256, sube el original a R2 y crea el registro `PROCESSING`; la respuesta `202` incluye `trackingId`.
 3. Se encola un trabajo BullMQ con el `documentId`.
 4. El worker extrae texto (`pdf-parse` o UTF-8; `mammoth` solo si se habilita DOCX opcional), guarda `normalized.txt` en R2 y lo indexa en Elasticsearch.
 5. El estado pasa a `INDEXED` o `ERROR` y se publica por SSE.

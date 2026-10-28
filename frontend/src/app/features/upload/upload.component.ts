@@ -12,6 +12,7 @@ interface QueueItem {
   file: File;
   status: QueueStatus;
   progress: number;
+  idempotencyKey: string;
   documentId?: string;
   error?: string;
 }
@@ -205,7 +206,7 @@ export class UploadComponent {
         this.error.set(`${file.name} supera los 25 MB.`);
         continue;
       }
-      items.push({ file, status: 'PENDING', progress: 0 });
+      items.push({ file, status: 'PENDING', progress: 0, idempotencyKey: crypto.randomUUID() });
     }
 
     if (items.length) {
@@ -232,7 +233,7 @@ export class UploadComponent {
       try {
         const document = await this.api.uploadDocument(item.file, this.metadata, (progress) => {
           this.patch(index, { progress });
-        });
+        }, item.idempotencyKey);
         this.patch(index, {
           status: document.status,
           documentId: document.id,
@@ -260,8 +261,8 @@ export class UploadComponent {
     }
 
     try {
-      await this.api.retryDocument(item.documentId);
-      this.patch(index, { status: 'RECEIVED', error: undefined });
+      const document = await this.api.retryDocument(item.documentId);
+      this.patch(index, { status: document.status, error: undefined });
     } catch (error) {
       this.patch(index, { error: apiErrorMessage(error, 'No se pudo reintentar.') });
     }

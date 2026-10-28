@@ -1,13 +1,18 @@
 import { Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { extname } from 'path';
 import pdfParse from 'pdf-parse';
 import * as mammoth from 'mammoth';
 import { AppError } from '../common/app-error';
 
-const MAX_TEXT_CHARS = Number(process.env.MAX_TEXT_CHARS ?? 2_000_000);
-
 @Injectable()
 export class ExtractionService {
+  private readonly maxTextChars: number;
+
+  constructor(private readonly config: ConfigService) {
+    this.maxTextChars = config.get<number>('processing.maxTextChars') ?? 2_000_000;
+  }
+
   async extract(buffer: Buffer, mime: string, filename: string): Promise<string> {
     const extension = extname(filename).toLowerCase();
 
@@ -39,7 +44,7 @@ export class ExtractionService {
 
     try {
       const data = await pdfParse(buffer);
-      const text = normalize(data.text);
+      const text = normalize(data.text, this.maxTextChars);
       if (!text) {
         throw new AppError(
           'NO_EXTRACTABLE_TEXT',
@@ -71,7 +76,7 @@ export class ExtractionService {
 
     try {
       const result = await mammoth.extractRawText({ buffer });
-      const text = normalize(result.value);
+      const text = normalize(result.value, this.maxTextChars);
       if (!text) {
         throw new AppError(
           'DOCX_EXTRACTION_FAILED',
@@ -103,7 +108,7 @@ export class ExtractionService {
       );
     }
 
-    const normalized = normalize(text);
+    const normalized = normalize(text, this.maxTextChars);
     if (!normalized) {
       throw new AppError('EMPTY_FILE', 'El archivo está vacío.', 422, false);
     }
@@ -111,7 +116,7 @@ export class ExtractionService {
   }
 }
 
-function normalize(text: string): string {
+function normalize(text: string, maxTextChars: number): string {
   return text
     .replace(/^\uFEFF/, '')
     .replace(/\u0000/g, '')
@@ -119,5 +124,5 @@ function normalize(text: string): string {
     .replace(/[ \t]+\n/g, '\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim()
-    .slice(0, MAX_TEXT_CHARS);
+    .slice(0, Math.max(1, maxTextChars));
 }

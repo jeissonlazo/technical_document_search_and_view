@@ -39,8 +39,9 @@ export class DocumentsController {
     @CurrentUser() user: AuthContext['user'],
     @UploadedFile() file: Express.Multer.File | undefined,
     @Body() dto: CreateDocumentDto,
+    @Headers('idempotency-key') idempotencyKey?: string,
   ) {
-    return this.documents.create(user.id, file, dto);
+    return this.documents.create(user.id, file, dto, idempotencyKey);
   }
 
   @Post('batch')

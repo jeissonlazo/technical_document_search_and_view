@@ -1,6 +1,8 @@
 import { Inject } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Job, UnrecoverableError } from 'bullmq';
+import type { Document as PrismaDocument } from '@prisma/client';
 import type { Readable } from 'stream';
 import { AppError } from '../common/app-error';
 import { EventsService } from '../events/events.service';
@@ -15,14 +17,18 @@ interface DocumentJob {
 
 @Processor('documents', { concurrency: Number(process.env.WORKER_CONCURRENCY ?? 2) })
 export class DocumentProcessor extends WorkerHost {
+  private readonly timeoutMs: number;
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly extraction: ExtractionService,
     private readonly search: SearchService,
     private readonly events: EventsService,
     @Inject(OBJECT_STORAGE) private readonly storage: ObjectStorage,
+    config: ConfigService,
   ) {
     super();
+    this.timeoutMs = config.get<number>('processing.timeoutMs') ?? 60_000;
   }
 
   async process(job: Job<DocumentJob>): Promise<void> {
@@ -49,9 +55,11 @@ export class DocumentProcessor extends WorkerHost {
     });
 
     try {
-      const object = await this.storage.get(document.objectKey);
-      const buffer = await streamToBuffer(object.body);
-      const text = await this.extraction.extract(buffer, document.mime, document.objectKey);
+      const text = await withTimeout(
+        this.resolveText(document),
+        this.timeoutMs,
+        'La extracción de texto',
+      );
 
       if (!document.normalizedTextKey) {
         throw new AppError('INTERNAL_ERROR', 'El documento no tiene clave de texto normalizado.', 500, false);
@@ -63,19 +71,23 @@ export class DocumentProcessor extends WorkerHost {
         'text/plain; charset=utf-8',
       );
 
-      await this.search.indexDocument(
-        {
-          id: document.id,
-          userId: document.userId,
-          title: document.title,
-          description: document.description,
-          author: document.author,
-          category: document.category,
-          version: document.version,
-          tags: document.tags,
-          createdAt: document.createdAt,
-        },
-        text,
+      await withTimeout(
+        this.search.indexDocument(
+          {
+            id: document.id,
+            userId: document.userId,
+            title: document.title,
+            description: document.description,
+            author: document.author,
+            category: document.category,
+            version: document.version,
+            tags: document.tags,
+            createdAt: document.createdAt,
+          },
+          text,
+        ),
+        this.timeoutMs,
+        'La indexación',
       );
 
       await this.prisma.document.update({
@@ -158,6 +170,43 @@ export class DocumentProcessor extends WorkerHost {
       throw error;
     }
   }
+
+  private async resolveText(document: PrismaDocument): Promise<string> {
+    // En reintentos reutilizamos el texto ya normalizado, si existe.
+    if (document.normalizedTextKey) {
+      try {
+        const normalized = await this.storage.get(document.normalizedTextKey);
+        const text = (await streamToBuffer(normalized.body)).toString('utf8').trim();
+        if (text) return text;
+      } catch {
+        // Si el objeto normalizado falta, se vuelve a extraer del original.
+      }
+    }
+
+    const object = await this.storage.get(document.objectKey);
+    const buffer = await streamToBuffer(object.body);
+    return this.extraction.extract(buffer, document.mime, document.objectKey);
+  }
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, stage: string): Promise<T> {
+  if (timeoutMs <= 0) return promise;
+
+  let timer: NodeJS.Timeout;
+  const timeout = new Promise<T>((_, reject) => {
+    timer = setTimeout(() => {
+      reject(
+        new AppError(
+          'PROCESSING_TIMEOUT',
+          `${stage} superó el tiempo máximo de ${Math.round(timeoutMs / 1000)} s.`,
+          504,
+          true,
+        ),
+      );
+    }, timeoutMs);
+  });
+
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
 async function streamToBuffer(stream: Readable): Promise<Buffer> {
