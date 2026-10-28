@@ -2,7 +2,7 @@
 ## Buscador y Visor de Documentos Técnicos
 
 **Versión:** 1.1  
-**Estado:** Borrador funcional actualizado; stack, autenticación y visor DOCX definidos  
+**Estado:** Borrador funcional actualizado; stack y visores PDF/TXT/Markdown definidos. DOCX queda fuera de la v1 porque no es un requisito del enunciado original.
 **Frontend:** Angular 22 + TypeScript + Spartan NG
 
 ---
@@ -27,7 +27,7 @@ La aplicación será privada, tendrá interfaz en español e inglés, ofrecerá 
 | PDF | PDF.js |
 | TXT | Visor de texto plano propio |
 | Markdown | Visor de Markdown renderizado y sanitizado |
-| DOCX | `docx-preview` en el navegador (solo lectura); `mammoth` en backend para extracción de texto |
+| DOCX | Fuera de la v1; el código existente queda como soporte opcional/experimental |
 | Editor enriquecido | Tiptap no requerido para la primera versión; evaluado para edición futura, no para el visor DOCX |
 | API | NestJS |
 | Búsqueda | Elasticsearch mediante la API |
@@ -79,7 +79,7 @@ La aplicación será privada, tendrá interfaz en español e inglés, ofrecerá 
 
 **FE-010.** La aplicación deberá identificar el formato admitido y seleccionar el visor correspondiente.
 
-**FE-011.** Los formatos iniciales serán PDF, TXT, Markdown y DOCX.
+**FE-011.** Los formatos iniciales serán PDF, TXT y Markdown. DOCX no forma parte de la v1.
 
 **FE-012.** El visor deberá mostrar el título y los metadatos disponibles del documento.
 
@@ -99,8 +99,8 @@ La aplicación será privada, tendrá interfaz en español e inglés, ofrecerá 
 
 - Utilizar PDF.js como motor de visualización.
 - Incorporar navegación por páginas y controles de zoom.
-- Permitir selección y copia de texto cuando el PDF lo permita.
-- Ofrecer búsqueda dentro del documento.
+- Permitir selección y copia de texto cuando el PDF lo permita, mediante la capa de texto de PDF.js.
+- La búsqueda dentro del documento es una mejora opcional/fase 2; el enunciado original no la exige.
 - Gestionar la carga de documentos grandes y los errores de lectura.
 - No asumir que todos los PDF contienen texto seleccionable.
 
@@ -118,15 +118,9 @@ La aplicación será privada, tendrá interfaz en español e inglés, ofrecerá 
 - Controlar los enlaces externos y evitar la ejecución de contenido no confiable.
 - Mantener una presentación legible en pantallas pequeñas.
 
-**DOCX**
+**DOCX (fuera de alcance v1)**
 
-- Permitir consultar documentos Word en modo de solo lectura.
-- Renderizar en el navegador con `docx-preview`; el backend extrae el texto con `mammoth` para indexación.
-- Preservar, en la medida que permita `docx-preview`, títulos, párrafos, listas, tablas, imágenes y estilos habituales.
-- Sanitizar el HTML generado y bloquear enlaces externos no confiables; limitar imágenes y tamaño.
-- Informar de las limitaciones de visualización cuando existan elementos no compatibles.
-- Aceptar solo `.docx` (no `.docm` ni documentos cifrados); validar el ZIP, limitar tamaño y descompresión, y no ejecutar macros ni contenido externo.
-- No usar un editor WYSIWYG (`docx-editor` u otro): la primera versión es de solo lectura y un editor añade dependencias, licencias y superficie de ataque innecesarias.
+No forma parte de los requisitos del enunciado original. El código existente (`docx-preview` + `mammoth`) queda como soporte opcional/experimental y no se evalúa en la v1. Las notas de Tiptap y `docx-editor` se conservan en la sección 6.2.
 
 ### 3.3. Carga de documentos
 
@@ -252,7 +246,7 @@ Si el backend conserva `RECEIVED` como estado inicial, la interfaz lo presentar�
 Las siguientes decisiones se incorporan a esta versión a partir de las preferencias confirmadas:
 
 1. **Solo lectura:** la aplicación no editará el contenido original de los documentos en la primera versión.
-2. **Cuatro formatos:** PDF, TXT, Markdown y DOCX; DOCX se renderiza con `docx-preview` y se indexa con `mammoth` en el backend.
+2. **Tres formatos:** PDF, TXT y Markdown. DOCX queda fuera de la v1 por no ser un requisito del enunciado original.
 3. **Metadatos técnicos:** se contemplan título, descripción, etiquetas, categoría, versión y autor como propuesta inicial.
 4. **Acceso privado mínimo:** registro e inicio de sesión con email/contraseña, sesión por cookie HttpOnly y API keys personales; sin roles ni permisos diferenciados en la primera versión.
 5. **Responsive completo:** se incluye soporte para escritorio, tablet y móvil.
@@ -290,7 +284,7 @@ Los siguientes puntos recogen lo ya resuelto y lo que sigue pendiente antes de c
 - **Pendiente:** validar en un proyecto real los componentes que se copian al repositorio (helm), el preset de Tailwind 4 y el modo oscuro; definir la política de actualización de los componentes copiados.
 - **Descartado:** Optimus UI. Requiere Angular 22.1.4+ (v2.0.2) o Angular 21 (v1.0.2), y es un fork comunitario de PrimeNG; no se usa para evitar atar la versión de Angular.
 
-### 6.2. Visualización de DOCX
+### 6.2. DOCX opcional (fuera de v1)
 
 - **Resuelto:** visor de solo lectura con `docx-preview` en el navegador. El backend extrae texto con `mammoth` para búsqueda e indexación.
 - **Descartado:** `docx-editor` (EigenPal). Es una librería de edición WYSIWYG para React y Vue, sin adaptador Angular; usarla obligaría a incrustar React o a construir un visor sobre su core, con más peso y complejidad de la necesaria. Además, sus módulos Pro (tracked changes, comentarios, colaboración) usan una licencia comercial.
@@ -315,8 +309,8 @@ Los siguientes puntos recogen lo ya resuelto y lo que sigue pendiente antes de c
 ### 6.5. Experiencia de búsqueda
 
 - **Propuesta:** 20 resultados por página; orden por relevancia, título y fecha; filtros por categoría, etiquetas, autor y versión.
-- **Resuelto:** el resaltado obligatorio es el de los fragmentos de resultados (FE-005), no el del cuerpo del documento. En DOCX se resalta en los snippets devueltos por Elasticsearch; el resaltado dentro del visor es una mejora opcional y no se garantiza por página, porque DOCX no almacena páginas estables.
-- **Pendiente:** si se requiere enlace profundo a la coincidencia, definir una vista de “texto extraído” con `<mark>` para DOCX; para PDF, usar la página de PDF.js. No prometer página exacta en DOCX.
+- **Resuelto:** el resaltado obligatorio es el de los fragmentos de resultados (FE-005), no el del cuerpo del documento. En los formatos de la v1 se resalta en los snippets devueltos por Elasticsearch; el resaltado dentro del visor es una mejora opcional y no se garantiza por página, porque DOCX no almacena páginas estables.
+- **Pendiente:** si se requiere enlace profundo a la coincidencia, definir una vista de “texto extraído” con `<mark>`; para PDF, usar la página de PDF.js. No prometer página exacta en DOCX.
 - **Propuesta:** estado vacío con sugerencias y acción para limpiar filtros; errores de búsqueda con reintento.
 - **Pendiente:** acordar las métricas y condiciones de las pruebas de rendimiento (p95 backend y tiempo percibido).
 
@@ -345,7 +339,7 @@ Los siguientes puntos recogen lo ya resuelto y lo que sigue pendiente antes de c
 
 La primera versión se considerará funcional cuando:
 
-1. Un usuario autorizado pueda cargar documentos PDF, TXT, Markdown y DOCX.
+1. Un usuario autorizado pueda cargar documentos PDF, TXT y Markdown.
 2. La carga muestre progreso y estados individuales de procesamiento.
 3. Los documentos indexados puedan localizarse mediante búsqueda de texto completo y filtros.
 4. El usuario pueda abrir los documentos admitidos en modo de solo lectura.
@@ -363,7 +357,7 @@ La primera versión se considerará funcional cuando:
 - Edición de PDF, anotaciones o modificación de sus páginas.
 - Colaboración en tiempo real.
 - OCR obligatorio de documentos escaneados.
-- Compatibilidad con formatos distintos de PDF, TXT, Markdown y DOCX.
+- Compatibilidad con formatos distintos de PDF, TXT y Markdown; DOCX queda fuera de la v1.
 - Implementación de la lógica de indexación en el frontend.
 - Edición de DOCX con un editor WYSIWYG; la primera versión es solo lectura.
 - Verificación de email, recuperación de contraseña y roles/permisos diferenciados.

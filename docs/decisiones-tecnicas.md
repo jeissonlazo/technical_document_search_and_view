@@ -4,11 +4,11 @@ Documento vivo para registrar las decisiones del buscador y visor de documentos 
 
 ## 1. Alcance de carga
 
-La carga acepta TXT, PDF con texto extraíble, Markdown y DOCX. Se permiten las extensiones `.md` y `.markdown`; DOCX solo `.docx` (no `.docm`). TXT y Markdown deben ser texto UTF-8; Markdown se indexa a partir de su contenido textual, conservando el original para mostrarlo de forma legible. DOCX se indexa a partir del texto extraído con `mammoth` y se visualiza en solo lectura con `docx-preview`. La aceptación no se determina solo por la extensión o el `Content-Type`: el backend valida el contenido real, incluido el ZIP de DOCX.
+La carga acepta TXT, PDF con texto extraíble y Markdown como requisitos de la v1. Se permiten las extensiones `.md` y `.markdown`; TXT y Markdown deben ser texto UTF-8; Markdown se indexa a partir de su contenido textual, conservando el original para mostrarlo de forma legible. El backend conserva además DOCX como **soporte opcional/experimental fuera de la v1**: no es un requisito del enunciado original y no se incluye en la aceptación. La aceptación no se determina solo por la extensión o el `Content-Type`: el backend valida el contenido real.
 
 Los PDF deben permitir extraer texto. OCR para PDF escaneados queda fuera del alcance inicial. Si un PDF es escaneado, está protegido/corrupto o no produce texto útil, ese documento termina en `ERROR` con una causa comprensible; la cola continúa con el siguiente archivo. No se indexa silenciosamente un PDF vacío.
 
-Los DOCX deben ser documentos de Word 2007+ sin cifrado ni macros. Se valida la firma ZIP, se limita el tamaño y la relación de descompresión, y se extrae texto con `mammoth`; un DOCX corrupto, cifrado o con macros termina en `ERROR` (`DOCX_CORRUPTED`, `DOCX_ENCRYPTED` o `DOCX_EXTRACTION_FAILED`). La visualización se hace en el navegador con `docx-preview`, en modo solo lectura; no se implementa edición ni conversión a PDF en la primera versión.
+El soporte opcional DOCX acepta documentos de Word 2007+ sin cifrado ni macros. Se valida la firma ZIP, se limita el tamaño y la relación de descompresión, y se extrae texto con `mammoth`; un DOCX corrupto, cifrado o con macros termina en `ERROR` (`DOCX_CORRUPTED`, `DOCX_ENCRYPTED` o `DOCX_EXTRACTION_FAILED`). La visualización se hace en el navegador con `docx-preview`, en modo solo lectura; no se implementa edición ni conversión a PDF. Nada de esto forma parte de la aceptación de la v1.
 
 ## Ciclo de estados y errores del documento
 
@@ -160,14 +160,14 @@ El tiempo disponible para la kata es de un día. Elasticsearch aumenta la cantid
 
 | Componente | Tecnología | Responsabilidad |
 | --- | --- | --- |
-| Frontend | Angular 22 + TypeScript + Spartan NG + Tailwind CSS 4 | Formulario de carga, cola secuencial, búsqueda, filtros, resultados resaltados, visores (PDF.js, `docx-preview`, Markdown, TXT), i18n es/en, temas y estado reactivo. |
+| Frontend | Angular 22 + TypeScript + Spartan NG + Tailwind CSS 4 | Formulario de carga, cola secuencial, búsqueda, filtros, resultados resaltados, visores de PDF.js/Markdown/TXT (DOCX opcional), i18n es/en, temas y estado reactivo. |
 | API / backend | NestJS + TypeScript | API REST, autenticación, validación, metadatos, estados y coordinación de trabajos. |
 | Persistencia principal | PostgreSQL | Fuente de verdad para metadatos y estados de cada documento. |
 | Búsqueda | Elasticsearch | Índice derivado para texto completo, relevancia, filtros, paginación y fragmentos resaltados. |
 | Cola de procesamiento | Redis + BullMQ | Trabajos asíncronos de extracción e indexación; no administra la subida desde el navegador. |
 | Tiempo real | Server-Sent Events (SSE) | Notificaciones del backend al frontend cuando cambia el estado de un documento. |
 | Autenticación | Sesión por cookie HttpOnly + API keys | Registro, inicio de sesión, sesión, cierre, API keys personales; sin roles en la primera versión. |
-| Visores | PDF.js, `docx-preview`, Markdown sanitizado y visor TXT | Renderizar el original en solo lectura sin descargarlo; DOCX se indexa con `mammoth` en backend. |
+| Visores | PDF.js, Markdown sanitizado y visor TXT; `docx-preview` opcional fuera de v1 | Renderizar el original en solo lectura sin descargarlo. |
 | Entorno local | Docker Compose | Levantar API, trabajador, PostgreSQL, Elasticsearch y Redis para desarrollo y demostración. |
 | Almacenamiento de binarios | Cloudflare R2 (bucket privado); MinIO solo para tests offline | Conservar originales y contenido normalizado fuera de Redis/PostgreSQL, mediante una interfaz de almacenamiento compatible con R2/S3. |
 
@@ -214,7 +214,7 @@ Antes de fijar límites de producción, recoger o acordar estos datos:
 | Cargas simultáneas | Presión sobre red, CPU, disco, base de datos e índice | El frontend sube un solo archivo a la vez por lote. La concurrencia de procesamiento en backend es independiente y configurable. |
 | Tasa de llegada y ráfagas | Capacidad de ingestión y tamaño de cola | Estimar documentos/minuto promedio y pico, incluyendo reintentos. |
 | Tiempo de subida y timeout | Experiencia de usuario y conexiones ocupadas | El cliente debe poder subir archivos grandes sin bloquear la indexación; acordar timeouts en cada capa. |
-| Formatos y complejidad del contenido | CPU y memoria de extracción | Aceptar TXT UTF-8, Markdown UTF-8, PDF con texto extraíble y DOCX sin macros; OCR queda fuera del alcance inicial. PDF ilegible, protegido, corrupto o sin texto útil termina en `ERROR` con causa clara; DOCX corrupto, cifrado o con macros también. |
+| Formatos y complejidad del contenido | CPU y memoria de extracción | Aceptar TXT UTF-8, Markdown UTF-8 y PDF con texto extraíble; DOCX queda como soporte opcional fuera de la v1. OCR queda fuera del alcance inicial. PDF ilegible, protegido, corrupto o sin texto útil termina en `ERROR` con causa clara. |
 | Tamaño de texto extraído | Tamaño de índice y duración de indexación | Limitar páginas, caracteres o bytes extraídos por archivo para proteger el servicio. |
 | Almacenamiento y retención | Espacio, copias de seguridad y borrado | Originales y texto normalizado se guardan en Cloudflare R2 (bucket privado); definir retención, versionado y ciclo de vida. |
 | Idempotencia y reintentos | Evita duplicados tras fallos de red o reenvíos | Usar una clave/identificador de operación y definir cuándo una repetición crea o reutiliza el documento. |
@@ -246,7 +246,7 @@ No se debe confirmar `RECEIVED` si el archivo o la tarea no quedaron guardados d
 ## Decisiones pendientes
 
 - [x] Adoptar Spartan NG (Angular CDK + Tailwind 4) como base de UI, con Angular 22 y versiones exactas.
-- [x] Adoptar `docx-preview` para visualización DOCX y `mammoth` para extracción de texto; descartar `docx-editor` por ser React/Vue y orientado a edición.
+- [x] Adoptar `docx-preview`/`mammoth` solo como soporte opcional DOCX, fuera de la aceptación de la v1; descartar `docx-editor` por ser React/Vue y orientado a edición.
 - [x] Adoptar autenticación mínima: registro, inicio de sesión, sesión por cookie HttpOnly y API keys personales, sin roles.
 - [x] Adoptar i18n runtime español/inglés y temas claro/oscuro con persistencia local.
 - [x] Añadir `descripción` a los metadatos y al índice de búsqueda.
@@ -274,9 +274,9 @@ No se debe confirmar `RECEIVED` si el archivo o la tarea no quedaron guardados d
 - Se actualiza el estado final a `INDEXED` o `ERROR` y se notifica al frontend con un código y mensaje comprensible cuando hay error.
 - El frontend sube un solo archivo a la vez por lote y no inicia el siguiente hasta recibir la respuesta del backend para el actual.
 - La cantidad máxima del lote es configurable y se valida; el progreso y los errores se muestran por archivo.
-- Se aceptan TXT UTF-8, Markdown UTF-8, PDF con texto extraíble y DOCX sin macros; la validación del backend comprueba el tipo real, incluido el ZIP de DOCX.
+- Se aceptan TXT UTF-8, Markdown UTF-8 y PDF con texto extraíble; la validación del backend comprueba el tipo real. DOCX es opcional y no forma parte de la aceptación de la v1.
 - Un PDF sin texto extraíble termina en `ERROR` con una causa comprensible; no se ejecuta OCR y el resto de la cola continúa.
-- Un DOCX corrupto, cifrado o con macros termina en `ERROR` con causa comprensible; no se ejecutan macros ni contenido externo.
+- Si se habilita el soporte opcional DOCX, un documento corrupto, cifrado o con macros termina en `ERROR` con causa comprensible; no se ejecutan macros ni contenido externo.
 - Los originales y el texto normalizado se guardan en R2 con claves estables; PostgreSQL conserva `bucket`, `object_key`, checksum, tamaño y MIME. El contenido se sirve por URL firmada o por la API, nunca por una URL pública permanente.
 - El acceso privado exige registro/inicio de sesión; las API keys permiten acceso programático y se pueden revocar; SSE usa la cookie de sesión.
 - La interfaz está disponible en español e inglés, con tema claro/oscuro y diseño responsive; los códigos de error se traducen en el cliente.
@@ -317,13 +317,14 @@ No se debe confirmar `RECEIVED` si el archivo o la tarea no quedaron guardados d
 | 2026-10-27 | Separar recepción de archivo de extracción e indexación | Adoptada para el diseño | El enunciado pide respuesta inicial inmediata, ID de seguimiento y procesamiento asíncrono. |
 | 2026-10-27 | Mantener la latencia de búsqueda separada del tiempo de carga | Adoptada para el diseño | El rango de 400 ms a 1 s se define para búsquedas; el procesamiento pesado debe ser asíncrono. |
 | 2026-10-28 | Adoptar Spartan NG + Tailwind CSS 4 sobre Angular 22, en lugar de Optimus UI | Adoptada | Spartan NG 1.8.3 soporta Angular >=21 <23, es MIT, accesible y no impone una versión fija; Optimus UI 2.x exige Angular 22.1.4+ y es un fork comunitario. |
-| 2026-10-28 | Aceptar DOCX y visualizarlo con `docx-preview`; extraer texto con `mammoth` en backend | Adoptada | `docx-editor` no tiene adaptador Angular (solo React/Vue), está orientado a edición y sus módulos Pro son comerciales; `docx-preview` cubre la visualización de solo lectura y `mammoth` la indexación. |
+| 2026-10-28 | Aceptar DOCX y visualizarlo con `docx-preview`; extraer texto con `mammoth` en backend | Superada por la decisión de alcance v1 (solo TXT/PDF/Markdown) | `docx-editor` no tiene adaptador Angular y está orientado a edición; `docx-preview` queda como soporte opcional, no como requisito. |
 | 2026-10-28 | Autenticación mínima con registro, inicio de sesión, cookie HttpOnly y API keys personales, sin roles | Adoptada | Cubre el acceso privado y el acceso programático sin construir RBAC; los roles quedan para una versión posterior. |
 | 2026-10-28 | i18n runtime español/inglés y temas claro/oscuro persistentes | Adoptada | Requisito del frontend; se implementa con diccionarios y variables CSS, no con el i18n build-time de Angular. |
 | 2026-10-28 | Añadir `descripción` a los metadatos y al índice de búsqueda | Adoptada | El frontend la incluye en el formulario y en los filtros; Elasticsearch la pondera junto con título y contenido. |
 | 2026-10-28 | Exponer `GET /api/documents/:id/content` para el visor, con `Range` o URL firmada | Adoptada | El texto normalizado no conserva la estructura de PDF/DOCX/Markdown; el visor necesita el original autorizado. |
 | 2026-10-28 | Ampliar `GET /api/search` con `sort`, `pageSize`, filtros tipados y facetas | Adoptada | El frontend requiere ordenamiento y filtros; el contrato anterior solo mencionaba paginación y highlights. |
-| 2026-10-28 | Descartar Tiptap para el visor DOCX de la v1; mantener `docx-preview` | Adoptada | Tiptap no tiene soporte Angular oficial (solo `ngx-tiptap`, comunitario) y su importación DOCX es Pro/comercial, beta y con conversión en la nube; para solo lectura, `docx-preview` es más simple y preserva mejor el layout. |
+| 2026-10-28 | Descartar Tiptap; `docx-preview` queda solo como soporte opcional fuera de la v1 | Adoptada | Tiptap no tiene soporte Angular oficial (solo `ngx-tiptap`, comunitario) y su importación DOCX es Pro/comercial, beta y con conversión en la nube; para solo lectura, `docx-preview` es más simple si se habilita DOCX opcional. |
 | 2026-10-28 | El resaltado obligatorio es en los fragmentos de resultados; el resaltado dentro del visor DOCX es opcional y sin página exacta | Adoptada | HU-02/FE-005 piden highlights en los resultados; DOCX no tiene páginas estables en el archivo. Si se requiere deep-link, se usa una vista de texto extraído con `<mark>`. |
+| 2026-10-28 | Limitar la v1 a TXT, PDF y Markdown; DOCX queda fuera de la aceptación | Adoptada | El enunciado original solo exige TXT, PDF y Markdown. El código DOCX existente se conserva como soporte opcional/experimental, sin impacto en la evaluación. |
 | 2026-10-28 | Usar Cloudflare R2 como almacenamiento principal de originales y texto normalizado, en bucket privado y con URLs firmadas | Adoptada | Separa binarios de PostgreSQL/Redis, permite acceso compartido entre API y workers y evita discos locales; MinIO queda solo para tests offline. |
 | 2026-10-28 | Añadir `POST /api/documents/batch` para clientes API, manteniendo la subida secuencial de Angular | Adoptada | El endpoint recibe archivos y metadatos alineados, crea documentos/jobs independientes y devuelve resultados parciales; Angular sigue usando una solicitud por archivo. |

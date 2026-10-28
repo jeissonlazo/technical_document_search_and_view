@@ -1,6 +1,6 @@
-import { Component, inject, signal } from '@angular/core';
+import { Component, OnInit, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { RouterLink } from '@angular/router';
+import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { DomSanitizer, type SafeHtml } from '@angular/platform-browser';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import DOMPurify from 'dompurify';
@@ -127,9 +127,11 @@ const EMPTY_FACETS: SearchFacets = { categories: [], tags: [], authors: [] };
     </section>
   `,
 })
-export class SearchComponent {
+export class SearchComponent implements OnInit {
   private readonly api = inject(ApiService);
   private readonly sanitizer = inject(DomSanitizer);
+  private readonly route = inject(ActivatedRoute);
+  private readonly router = inject(Router);
   private readonly searchTerms = new Subject<string>();
   readonly i18n = inject(I18nService);
 
@@ -152,6 +154,19 @@ export class SearchComponent {
       .subscribe(() => void this.run(1));
   }
 
+  ngOnInit(): void {
+    const params = this.route.snapshot.queryParamMap;
+    this.query = params.get('q') ?? '';
+    this.category = params.get('category') ?? '';
+    this.author = params.get('author') ?? '';
+    this.tags = params.get('tags') ?? '';
+    const initialPage = Number(params.get('page') ?? 1);
+
+    if (this.query.trim()) {
+      void this.run(Number.isFinite(initialPage) && initialPage > 0 ? initialPage : 1, false);
+    }
+  }
+
   onQueryInput(value: string): void {
     this.query = value;
     if (value.trim().length >= 2) {
@@ -159,7 +174,7 @@ export class SearchComponent {
     }
   }
 
-  async run(page = 1): Promise<void> {
+  async run(page = 1, syncUrl = true): Promise<void> {
     if (!this.query.trim()) return;
 
     this.loading.set(true);
@@ -178,6 +193,7 @@ export class SearchComponent {
       this.facets.set(response.facets);
       this.total.set(response.total);
       this.page.set(response.page);
+      if (syncUrl) this.syncUrl();
     } catch (error) {
       this.error.set(apiErrorMessage(error, 'No se pudo completar la búsqueda.'));
     } finally {
@@ -211,5 +227,19 @@ export class SearchComponent {
       ALLOWED_ATTR: [],
     });
     return this.sanitizer.bypassSecurityTrustHtml(clean);
+  }
+
+  private syncUrl(): void {
+    void this.router.navigate([], {
+      relativeTo: this.route,
+      queryParams: {
+        q: this.query.trim() || null,
+        category: this.category || null,
+        author: this.author || null,
+        tags: this.tags || null,
+        page: this.page() > 1 ? this.page() : null,
+      },
+      replaceUrl: true,
+    });
   }
 }

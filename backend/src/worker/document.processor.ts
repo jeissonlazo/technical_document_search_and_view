@@ -31,6 +31,9 @@ export class DocumentProcessor extends WorkerHost {
     });
     if (!document) return;
 
+    // Idempotencia: un reintento de un trabajo ya indexado no vuelve a procesarlo.
+    if (document.status === 'INDEXED') return;
+
     await this.prisma.document.update({
       where: { id: document.id },
       data: { status: 'PROCESSING' },
@@ -98,6 +101,35 @@ export class DocumentProcessor extends WorkerHost {
         error instanceof AppError
           ? error
           : new AppError('INTERNAL_ERROR', 'No se pudo procesar el documento.', 500, false);
+
+      const totalAttempts = job.opts.attempts ?? 1;
+      const isLastAttempt = job.attemptsMade + 1 >= totalAttempts;
+
+      if (appError.retryable && !isLastAttempt) {
+        // Mantener PROCESSING durante reintentos transitorios; ERROR es terminal.
+        await this.prisma.document.update({
+          where: { id: document.id },
+          data: {
+            status: 'PROCESSING',
+            errorCode: appError.code,
+            errorMessage: appError.message,
+          },
+        });
+
+        await this.events.publish({
+          type: 'document.status',
+          documentId: document.id,
+          userId: document.userId,
+          status: 'PROCESSING',
+          stage: 'retry',
+          errorCode: appError.code,
+          message: appError.message,
+          retryable: true,
+          attempt: job.attemptsMade + 1,
+        });
+
+        throw error;
+      }
 
       await this.prisma.document.update({
         where: { id: document.id },

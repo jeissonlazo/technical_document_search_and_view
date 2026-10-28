@@ -1,8 +1,8 @@
 # Buscador y visor de documentos técnicos
 
-Aplicación web para cargar documentos técnicos (PDF, TXT, Markdown y DOCX), procesarlos e indexarlos en segundo plano, buscar por texto completo y visualizarlos sin descargarlos manualmente.
+Aplicación web para cargar documentos técnicos (PDF, TXT y Markdown), procesarlos e indexarlos en segundo plano, buscar por texto completo y visualizarlos sin descargarlos manualmente. DOCX queda como soporte opcional fuera de la v1 porque no es un requisito del enunciado original.
 
-**Estado actual:** stack Docker verificado (`database`, `redis`, `elasticsearch` y `r2` en `true`). Se probó el flujo completo con TXT, DOCX y PDF, además de la carga batch con un archivo válido y uno inválido: subida, almacenamiento en R2, extracción, indexación, búsqueda con highlight y lectura del contenido.
+**Estado actual:** stack Docker verificado (`database`, `redis`, `elasticsearch` y `r2` en `true`). Se probó el flujo completo con TXT, PDF y Markdown (y DOCX como soporte opcional), además de la carga batch con un archivo válido y uno inválido: subida, almacenamiento en R2, extracción, indexación, búsqueda con highlight y lectura del contenido.
 
 ## Stack
 
@@ -22,6 +22,7 @@ Aplicación web para cargar documentos técnicos (PDF, TXT, Markdown y DOCX), pr
 - [Arquitectura](docs/architecture.md)
 - [Decisiones técnicas](docs/decisiones-tecnicas.md)
 - [Requerimientos de frontend](docs/requerimientos-frontend.md)
+- [Revisión del stack de visualización](docs/revision-visualizacion.md)
 - [Uso de IA](docs/ia.md)
 
 ## Estructura
@@ -321,7 +322,7 @@ pnpm build
 pnpm test
 ```
 
-Incluye pruebas unitarias del extractor: TXT, Markdown, BOM UTF-8, formatos no admitidos y archivo vacío. Las pruebas e2e de navegador, la búsqueda dentro de PDF y el benchmark de latencia quedan pendientes.
+Incluye pruebas unitarias del extractor (TXT, Markdown, BOM, formatos no admitidos, archivo vacío) y del worker (idempotencia, retry transitorio, error terminal y camino exitoso). Las pruebas e2e de navegador, la búsqueda dentro de PDF y el benchmark de latencia quedan pendientes.
 
 ## 9. API principal
 
@@ -382,7 +383,7 @@ Límites: 20 archivos, 25 MB por archivo y 100 MB totales por defecto. Angular *
 1. Angular envía un archivo a la vez por lote con `multipart/form-data`.
 2. NestJS valida formato/tamaño, calcula SHA-256, sube el original a R2 y crea el registro `RECEIVED`.
 3. Se encola un trabajo BullMQ con el `documentId`.
-4. El worker extrae texto (`pdf-parse`, `mammoth` o UTF-8), guarda `normalized.txt` en R2 y lo indexa en Elasticsearch.
+4. El worker extrae texto (`pdf-parse` o UTF-8; `mammoth` solo si se habilita DOCX opcional), guarda `normalized.txt` en R2 y lo indexa en Elasticsearch.
 5. El estado pasa a `INDEXED` o `ERROR` y se publica por SSE.
 6. Angular actualiza la cola del lote y permite reintentar errores transitorios.
 
@@ -407,7 +408,7 @@ Límites: 20 archivos, 25 MB por archivo y 100 MB totales por defecto. Angular *
 ## 13. Limitaciones actuales
 
 - El visor PDF usa PDF.js con navegación por páginas y zoom; la búsqueda dentro del PDF y el renderizado continuo quedan pendientes.
-- El visor DOCX usa `docx-preview` en modo solo lectura; no hay edición ni resaltado dentro del documento.
+- DOCX no es un requisito de la v1. El visor `docx-preview` y la extracción con `mammoth` existen como soporte opcional/experimental y no se incluyen en la aceptación.
 - Spartan NG está declarado y Tailwind 4 está configurado, pero los componentes helm todavía deben añadirse con su CLI. La UI actual usa Tailwind y HTML accesible.
 - No hay pruebas e2e de navegador ni medición formal de latencia todavía.
 - La autenticación es mínima: cookie HttpOnly, CSRF y API keys; sin roles ni permisos diferenciados.

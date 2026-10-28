@@ -20,7 +20,7 @@ Los estados persistidos del documento son `RECEIVED`, `PROCESSING`, `INDEXED` y 
 | Almacenamiento de objetos | Cloudflare R2 como almacenamiento principal de originales y texto normalizado, en bucket privado y detrás de una interfaz de almacenamiento; MinIO opcional solo para tests offline. | R2 añade dependencia de red/proveedor, coste de operaciones y necesidad de CORS, URLs firmadas y ciclo de vida; no garantiza la disponibilidad de PostgreSQL, Redis, Elasticsearch ni de la plataforma. |
 | Docker Compose | Permite levantar el conjunto de dependencias de forma reproducible en desarrollo y demostración. | Su uso queda limitado al entorno local; no determina la plataforma de producción. |
 
-La selección responde a los requisitos funcionales de la prueba original, pero la incorporación de DOCX, autenticación, i18n y temas amplía el alcance más allá de un día. Para mantener la primera versión acotada, se limita a un flujo de ingestión, un índice explícito, una búsqueda paginada y una interfaz SSE; no incluye OCR ni búsqueda semántica.
+La selección responde a los requisitos funcionales de la prueba original, pero la incorporación de autenticación, i18n y temas amplía el alcance más allá de un día. Para mantener la primera versión acotada, se limita a un flujo de ingestión, un índice explícito, una búsqueda paginada y una interfaz SSE; no incluye OCR ni búsqueda semántica. DOCX no es un requisito del enunciado original y queda fuera de la aceptación de la v1; el código existente se conserva como soporte opcional.
 
 ## Diagrama de arquitectura y flujo
 
@@ -56,7 +56,7 @@ flowchart LR
 
 1. Angular permite seleccionar un lote de tamaño variable. Mantiene una cola local y envía un solo archivo a la vez. El archivo siguiente no empieza a subirse hasta que el backend responde al anterior.
 2. Angular envía cada archivo y sus metadatos a `POST /api/documents` como `multipart/form-data`.
-3. NestJS valida autorización, formato real, tamaño, campos y metadatos. Se aceptan TXT UTF-8, Markdown UTF-8, PDF con texto extraíble y DOCX de Word 2007+ (`.docx`, sin macros ni cifrado). No se hace OCR en esta versión.
+3. NestJS valida autorización, formato real, tamaño, campos y metadatos. Se aceptan TXT UTF-8, Markdown UTF-8 y PDF con texto extraíble. DOCX no es requisito de la v1; el código existente lo admite como soporte opcional. No se hace OCR en esta versión.
 4. El backend conserva el original en Cloudflare R2 mediante AWS SDK para JavaScript y endpoint compatible con S3, detrás de una interfaz de almacenamiento. El bucket es privado; para tests offline se puede usar MinIO con la misma interfaz.
 5. PostgreSQL registra metadatos, clave de objeto estable, tamaño, MIME, checksum y estado inicial `RECEIVED`. La solicitud devuelve `202 Accepted` con el ID del documento solo cuando archivo y trabajo quedaron aceptados de forma recuperable.
 6. NestJS publica en BullMQ un trabajo que contiene el ID del documento y referencias necesarias, no los bytes del archivo. El estado pasa a `PROCESSING` mientras el trabajo espera o está activo. Si se implementa transactional outbox, el evento pendiente se escribe en PostgreSQL dentro de la misma transacción del registro; un dispatcher lo publica a Redis.
@@ -101,7 +101,7 @@ Al agotarse los reintentos, el documento termina en `ERROR` con código y causa 
 - Estados como `PENDIENTE` y `SUBIENDO` pertenecen al frontend; el backend persiste `RECEIVED`, `PROCESSING`, `INDEXED` o `ERROR`.
 - La UI presenta un contador de indexados, fallidos y pendientes/procesándose. El lote queda “completo” cuando cada archivo terminó en `INDEXED` o `ERROR`, incluyendo fallos locales de archivos que el servidor rechazó antes de crear un documento.
 - Los errores usan códigos estables y reportan etapa, mensaje seguro, `retryable` y referencia de soporte. La UI no muestra trazas ni detalles internos.
-- Ejemplo de resumen: “2 indexados · 3 fallidos”, con una fila por documento y su motivo concreto. La falla de `informe.docx`, por ejemplo, no detiene `manual.pdf`, `notas.md` ni los otros archivos.
+- Ejemplo de resumen: “2 indexados · 3 fallidos”, con una fila por documento y su motivo concreto. La falla de `informe.pdf`, por ejemplo, no detiene `manual.pdf`, `notas.md` ni los otros archivos.
 - La cantidad de archivos por lote tendrá un límite configurable. El valor numérico debe fijarse con pruebas representativas, junto con el tamaño máximo por archivo y la concurrencia del worker.
 - Si se cierra la pestaña, se puede perder la cola local de archivos aún no enviados; los documentos aceptados siguen recuperables mediante sus IDs y consulta de estado. La persistencia/reanudación del lote queda fuera del alcance inicial.
 
@@ -143,12 +143,12 @@ El motor seleccionado es Elasticsearch por sus capacidades de texto completo, re
 
 - `GET /api/documents/:id` devuelve metadatos, estado y texto normalizado; no devuelve el binario.
 - `GET /api/documents/:id/content` devuelve el original autorizado con soporte de `Range` para PDF.js, o redirige a una URL firmada de R2 de corta duración. Si se usa R2, configurar CORS y exponer `Accept-Ranges`/`Content-Range`; si no, servir a través de la API.
-- **PDF:** PDF.js con navegación por páginas, zoom, capa de texto y búsqueda interna; no se asume texto seleccionable. Un PDF escaneado puede visualizarse aunque su indexación termine en `ERROR`.
-- **DOCX:** `docx-preview` en el navegador, solo lectura; el backend extrae texto con `mammoth`. No se usa un editor WYSIWYG. Los DOCX cifrados, con macros `.docm` o corruptos se rechazan. Tiptap no se usa para el visor: no tiene soporte Angular oficial y su importación DOCX es Pro/comercial y con conversión en la nube; se reevaluaría solo si se añade edición.
+- **PDF:** PDF.js con navegación por páginas, input de página, zoom y capa de texto para selección/copia; la búsqueda interna queda pendiente y no es requisito del enunciado original. Un PDF escaneado puede visualizarse aunque su indexación termine en `ERROR`.
+- **DOCX (opcional, fuera de v1):** `docx-preview` en el navegador, solo lectura; el backend extrae texto con `mammoth`. No se usa un editor WYSIWYG. Los DOCX cifrados, con macros `.docm` o corruptos se rechazan. Tiptap no se usa para el visor: no tiene soporte Angular oficial y su importación DOCX es Pro/comercial y con conversión en la nube; se reevaluaría solo si se añade edición.
 - **Markdown:** renderizado con sanitización (DOMPurify) y enlaces externos controlados; el texto indexado se conserva aparte.
 - **TXT:** `textContent` y `white-space: pre-wrap`; la codificación se normaliza en backend y un archivo no UTF-8 termina en `UNSUPPORTED_ENCODING`.
-- **Seguridad:** nunca `innerHTML` sin sanitizar; sanitizar highlights de Elasticsearch con allowlist; CSP con `worker-src blob:` para PDF.js, `connect-src` para la API/R2 y `img-src` para imágenes del DOCX.
-- **Resaltado:** los fragmentos de búsqueda se resaltan con `<em>` de Elasticsearch y se sanitizan en el cliente. El visor DOCX puede resaltar coincidencias en el DOM con `TreeWalker`/`Range`, pero no se promete página exacta; para un enlace profundo se usa la vista de texto extraído con `<mark>`. PDF sí puede mapear páginas con PDF.js.
+- **Seguridad:** nunca `innerHTML` sin sanitizar; sanitizar highlights de Elasticsearch con allowlist; CSP con `worker-src blob:` para PDF.js, `connect-src` para la API/R2 y, si se habilita DOCX opcional, `img-src` para sus imágenes.
+- **Resaltado:** los fragmentos de búsqueda se resaltan con `<em>` de Elasticsearch y se sanitizan en el cliente. PDF puede mapear páginas con PDF.js; el resaltado dentro de DOCX queda fuera de la v1.
 
 ## Frontend
 
@@ -286,7 +286,7 @@ Los nombres de rutas son una propuesta para el diseño; se pueden ajustar al imp
 - El índice contiene identificador estable, título, descripción, autor, categoría, etiquetas, versión y texto normalizado, con análisis en español para búsqueda textual.
 - El rendimiento se valida con volumen y concurrencia documentados; no se declara una capacidad máxima sin mediciones.
 - El detalle muestra metadatos y contenido estructurado sin requerir descargar el original; el original se obtiene con `GET /api/documents/:id/content` (con `Range`) o una URL firmada de corta duración.
-- DOCX se acepta, se indexa y se visualiza en solo lectura; los DOCX cifrados, con macros o corruptos terminan en `ERROR` con causa legible.
+- DOCX no forma parte de la aceptación de la v1; el soporte existente es opcional y no se evalúa.
 - Originales y texto normalizado se guardan en Cloudflare R2 con claves estables; PostgreSQL conserva `bucket`, `object_key`, checksum, tamaño y MIME; el contenido se sirve por URL firmada de corta duración o por la API.
 - El acceso privado exige registro/inicio de sesión; las API keys permiten acceso programático y se pueden revocar; SSE usa la cookie de sesión.
 - La interfaz está disponible en español e inglés, con tema claro/oscuro y diseño responsive; los códigos de error del backend se traducen en el cliente.
@@ -301,7 +301,7 @@ Los nombres de rutas son una propuesta para el diseño; se pueden ajustar al imp
 - [ ] Definir formato del contenido normalizado y política de retención/versionado de originales y texto normalizado en Cloudflare R2.
 - [ ] Alinear el estado inicial con HU-01: devolver `PROCESSING` en el `202` o documentar formalmente el mapeo de `RECEIVED` a “Procesando” en la UI.
 - [ ] Definir el modo de registro (abierto, por invitación o por bandera de entorno) y la política de verificación de email/recuperación de contraseña.
-- [ ] Validar la fidelidad de `docx-preview` con documentos Word representativos y documentar las limitaciones.
+- [ ] Validar la fidelidad de `docx-preview` solo si se decide mantener DOCX como soporte opcional.
 - [ ] Si se añade edición DOCX, evaluar Tiptap + Import DOCX (Pro/cloud) frente a `docx-editor`, incluyendo coste, licencia y privacidad.
 - [ ] Definir la política de actualización de los componentes helm de Spartan NG y la estrategia de i18n (servicio propio o Transloco).
 - [ ] Definir base/máximo del backoff, timeout por trabajo, política de pausa y recuperación de trabajos atascados; el máximo de reintentos transitorios ya está fijado en 3 reintentos adicionales.

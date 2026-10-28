@@ -58,6 +58,8 @@ export class DocumentsService {
       );
     }
 
+    this.validateContent(file.buffer, extension);
+
     const documentId = randomUUID();
     const bucket = this.config.getOrThrow<string>('r2.bucket');
     const objectKey = `documents/${userId}/${documentId}/original${extension}`;
@@ -250,6 +252,31 @@ export class DocumentsService {
       throw new AppError('DOCUMENT_NOT_FOUND', 'El documento no existe o no tienes acceso.', 404, false);
     }
     return document;
+  }
+
+  private validateContent(buffer: Buffer, extension: string): void {
+    if (extension === '.pdf' && buffer.subarray(0, 5).toString('latin1') !== '%PDF-') {
+      throw new AppError('FILE_CORRUPTED', 'El PDF está dañado o no se puede leer.', 422, false);
+    }
+
+    if (extension === '.docx' && buffer.subarray(0, 2).toString('latin1') !== 'PK') {
+      throw new AppError('DOCX_CORRUPTED', 'El documento Word está dañado o no se puede leer.', 422, false);
+    }
+
+    if (['.txt', '.md', '.markdown'].includes(extension)) {
+      const text = buffer.toString('utf8');
+      if (text.includes('\uFFFD')) {
+        throw new AppError(
+          'UNSUPPORTED_ENCODING',
+          'El archivo no está en UTF-8. Guarda el texto en UTF-8 y vuelve a intentarlo.',
+          422,
+          false,
+        );
+      }
+      if (!text.trim()) {
+        throw new AppError('EMPTY_FILE', 'El archivo está vacío.', 422, false);
+      }
+    }
   }
 }
 

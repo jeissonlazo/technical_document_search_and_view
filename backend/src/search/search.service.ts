@@ -2,6 +2,7 @@ import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Client } from '@elastic/elasticsearch';
 import type { FacetBucket, SearchFacets, SearchHit, SearchResponse } from '@docs/shared';
+import { AppError } from '../common/app-error';
 
 export interface IndexableDocument {
   id: string;
@@ -91,23 +92,27 @@ export class SearchService implements OnModuleInit {
   }
 
   async indexDocument(document: IndexableDocument, content: string): Promise<void> {
-    await this.client.index({
-      index: this.index,
-      id: document.id,
-      refresh: 'wait_for',
-      document: {
-        title: document.title,
-        description: document.description ?? '',
-        content,
-        author: document.author ?? '',
-        category: document.category ?? '',
-        version: document.version ?? '',
-        tags: document.tags,
-        userId: document.userId,
-        status: 'INDEXED',
-        createdAt: document.createdAt.toISOString(),
-      },
-    });
+    try {
+      await this.client.index({
+        index: this.index,
+        id: document.id,
+        refresh: 'wait_for',
+        document: {
+          title: document.title,
+          description: document.description ?? '',
+          content,
+          author: document.author ?? '',
+          category: document.category ?? '',
+          version: document.version ?? '',
+          tags: document.tags,
+          userId: document.userId,
+          status: 'INDEXED',
+          createdAt: document.createdAt.toISOString(),
+        },
+      });
+    } catch (error) {
+      throw toIndexingError(error);
+    }
   }
 
   async deleteDocument(documentId: string): Promise<void> {
@@ -227,4 +232,28 @@ function toBuckets(aggregation?: { buckets?: Array<{ key: string; doc_count: num
     value: bucket.key,
     count: bucket.doc_count,
   })) as SearchFacets['categories'];
+}
+
+function toIndexingError(error: unknown): AppError {
+  const candidate = error as {
+    meta?: { statusCode?: number };
+    statusCode?: number;
+  };
+  const statusCode = candidate.meta?.statusCode ?? candidate.statusCode;
+
+  if (statusCode && statusCode >= 400 && statusCode < 500) {
+    return new AppError(
+      'INDEXING_FAILED',
+      'El motor de búsqueda rechazó el documento. Revisa su formato y contenido.',
+      500,
+      false,
+    );
+  }
+
+  return new AppError(
+    'SEARCH_ENGINE_UNAVAILABLE',
+    'El motor de búsqueda no está disponible temporalmente. El sistema volverá a intentarlo.',
+    503,
+    true,
+  );
 }
