@@ -1,11 +1,12 @@
 import {
   HttpClient,
+  HttpEvent,
   HttpEventType,
   HttpParams,
   HttpResponse,
 } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
-import { filter, firstValueFrom, map, tap } from 'rxjs';
+import { Observable, filter, firstValueFrom, map, tap } from 'rxjs';
 import type {
   DocumentMetadata,
   DocumentStatus,
@@ -55,6 +56,36 @@ export class ApiService {
     onProgress?: (percent: number) => void,
     idempotencyKey?: string,
   ): Promise<DocumentMetadata> {
+    return this.sendDocument(
+      this.http.post<DocumentMetadata>('/api/documents', this.documentForm(file, metadata), {
+        reportProgress: true,
+        observe: 'events',
+        headers: idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : undefined,
+      }),
+      onProgress,
+    );
+  }
+
+  /**
+   * Reemplaza el contenido y los metadatos de un documento existente. El API
+   * lo vuelve a procesar y a indexar con el mismo `id`, sin crear un duplicado.
+   */
+  async updateDocument(
+    id: string,
+    file: File,
+    metadata: UploadMetadata,
+    onProgress?: (percent: number) => void,
+  ): Promise<DocumentMetadata> {
+    return this.sendDocument(
+      this.http.put<DocumentMetadata>(`/api/documents/${id}`, this.documentForm(file, metadata), {
+        reportProgress: true,
+        observe: 'events',
+      }),
+      onProgress,
+    );
+  }
+
+  private documentForm(file: File, metadata: UploadMetadata): FormData {
     const form = new FormData();
     form.append('file', file, file.name);
 
@@ -68,22 +99,23 @@ export class ApiService {
       }
     }
 
+    return form;
+  }
+
+  private sendDocument(
+    request: Observable<HttpEvent<DocumentMetadata>>,
+    onProgress?: (percent: number) => void,
+  ): Promise<DocumentMetadata> {
     return firstValueFrom(
-      this.http
-        .post<DocumentMetadata>('/api/documents', form, {
-          reportProgress: true,
-          observe: 'events',
-          headers: idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : undefined,
-        })
-        .pipe(
-          tap((event) => {
-            if (event.type === HttpEventType.UploadProgress && event.total) {
-              onProgress?.(Math.round((event.loaded / event.total) * 100));
-            }
-          }),
-          filter((event): event is HttpResponse<DocumentMetadata> => event instanceof HttpResponse),
-          map((response) => response.body as DocumentMetadata),
-        ),
+      request.pipe(
+        tap((event) => {
+          if (event.type === HttpEventType.UploadProgress && event.total) {
+            onProgress?.(Math.round((event.loaded / event.total) * 100));
+          }
+        }),
+        filter((event): event is HttpResponse<DocumentMetadata> => event instanceof HttpResponse),
+        map((response) => response.body as DocumentMetadata),
+      ),
     );
   }
 

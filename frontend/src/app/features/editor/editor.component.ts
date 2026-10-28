@@ -37,13 +37,16 @@ import {
         <app-editor-metadata-panel
           class="xl:sticky xl:top-6"
           [(metadata)]="metadata"
+          [mode]="mode()"
           [status]="status()"
           [filename]="filename()"
           [busy]="busy()"
-          [canPublish]="canPublish()"
+          [processing]="processing()"
+          [dirty]="dirty()"
+          [canSave]="canSave()"
           [documentId]="documentId()"
           [message]="error()"
-          (publish)="publish()"
+          (save)="save()"
           (download)="download()"
           (newDraft)="newDraft()"
         />
@@ -65,8 +68,21 @@ export class EditorComponent {
   readonly stats = computed(() => draftStats(this.markdown()));
   readonly filename = computed(() => markdownFilename(this.metadata().title));
   readonly busy = computed(() => this.status() === 'PUBLISHING');
-  readonly canPublish = computed(
-    () => this.metadata().title.trim().length > 0 && this.markdown().trim().length > 0,
+  readonly processing = computed(() => this.status() === 'PROCESSING' || this.status() === 'RECEIVED');
+  readonly mode = computed<'create' | 'update'>(() => (this.documentId() ? 'update' : 'create'));
+
+  /** Huella del último contenido guardado: sirve para saber si hay cambios. */
+  private readonly savedFingerprint = signal<string | null>(null);
+  readonly dirty = computed(() => this.savedFingerprint() !== this.fingerprint());
+
+  readonly canSave = computed(
+    () =>
+      this.metadata().title.trim().length > 0 &&
+      this.markdown().trim().length > 0 &&
+      !this.busy() &&
+      !this.processing() &&
+      // Un documento ya publicado solo se puede guardar si cambió algo.
+      (this.mode() === 'create' || this.dirty()),
   );
 
   /** Estable entre reintentos para que el API no duplique el documento. */
@@ -99,28 +115,44 @@ export class EditorComponent {
     });
   }
 
-  async publish(): Promise<void> {
-    if (this.busy() || !this.canPublish()) return;
+  async save(): Promise<void> {
+    if (!this.canSave()) return;
+
+    const previousStatus = this.status();
+    const documentId = this.documentId();
+    const file = markdownFile(this.markdown(), this.metadata().title);
+    const metadata = toUploadMetadata(this.metadata());
 
     this.error.set('');
     this.status.set('PUBLISHING');
 
     try {
-      const file = markdownFile(this.markdown(), this.metadata().title);
-      const document = await this.api.uploadDocument(
-        file,
-        toUploadMetadata(this.metadata()),
-        undefined,
-        this.publishKey,
-      );
+      const document = documentId
+        ? await this.api.updateDocument(documentId, file, metadata)
+        : await this.api.uploadDocument(file, metadata, undefined, this.publishKey);
 
       this.documentId.set(document.id);
       this.status.set(document.status);
+      this.savedFingerprint.set(this.fingerprint());
       // El siguiente documento necesita una clave distinta.
-      this.publishKey = crypto.randomUUID();
+      if (!documentId) this.publishKey = crypto.randomUUID();
     } catch (error) {
-      this.status.set('ERROR');
-      this.error.set(apiErrorMessage(error, this.i18n.t('editor.publishFailed')));
+      // Se conserva el estado real del documento: el fallo no lo convierte
+      // en un documento con error de procesamiento.
+      this.status.set(previousStatus);
+
+      if (httpStatus(error) === 404 && documentId) {
+        this.forgetDocument();
+        this.error.set(this.i18n.t('editor.missingDocument'));
+        return;
+      }
+
+      this.error.set(
+        apiErrorMessage(
+          error,
+          this.i18n.t(documentId ? 'editor.updateFailed' : 'editor.publishFailed'),
+        ),
+      );
     }
   }
 
@@ -144,10 +176,29 @@ export class EditorComponent {
 
     this.markdown.set('');
     this.metadata.set({ ...EMPTY_DRAFT_METADATA, categories: [] });
+    this.forgetDocument();
+    this.error.set('');
+  }
+
+  /** Vuelve al modo borrador: el próximo guardado crea un documento. */
+  private forgetDocument(): void {
     this.documentId.set(null);
     this.status.set('IDLE');
-    this.error.set('');
+    this.savedFingerprint.set(null);
     this.publishKey = crypto.randomUUID();
+  }
+
+  private fingerprint(): string {
+    const metadata = this.metadata();
+    return JSON.stringify([
+      this.markdown(),
+      metadata.title,
+      metadata.description,
+      metadata.author,
+      metadata.version,
+      metadata.tags,
+      metadata.categories,
+    ]);
   }
 
   /** EventSource reconecta pero no reproduce eventos perdidos. */
@@ -168,4 +219,8 @@ export class EditorComponent {
       // Se conserva el último estado conocido.
     }
   }
+}
+
+function httpStatus(error: unknown): number | undefined {
+  return (error as { status?: number } | null)?.status;
 }

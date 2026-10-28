@@ -64,7 +64,7 @@ import { CategoryComboboxComponent } from '../../../shared/document/category-com
             <input hlmInput class="mt-1 w-full" name="version" [(ngModel)]="metadata.version" />
           </label>
 
-          <label class="block text-sm font-medium">
+          <label class="block text-sm font-medium md:col-span-2">
             {{ i18n.t('upload.tags') }}
             <input hlmInput class="mt-1 w-full" name="tags" [(ngModel)]="metadata.tags" />
           </label>

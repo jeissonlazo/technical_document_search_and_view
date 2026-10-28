@@ -1,3 +1,4 @@
+import { createHash } from 'crypto';
 import { DocumentsService } from './documents.service';
 import type { CreateDocumentDto } from './documents.dto';
 
@@ -15,11 +16,11 @@ describe('DocumentsService', () => {
   };
 
   let tx: {
-    document: { create: jest.Mock };
+    document: { create: jest.Mock; update: jest.Mock };
     outboxEvent: { create: jest.Mock };
   };
   let prisma: {
-    document: { findUnique: jest.Mock };
+    document: { findUnique: jest.Mock; findFirst: jest.Mock };
     $transaction: jest.Mock;
   };
   let storage: { put: jest.Mock; delete: jest.Mock };
@@ -37,11 +38,12 @@ describe('DocumentsService', () => {
           errorCode: null,
           errorMessage: null,
         })),
+        update: jest.fn(),
       },
       outboxEvent: { create: jest.fn().mockResolvedValue(undefined) },
     };
     prisma = {
-      document: { findUnique: jest.fn().mockResolvedValue(null) },
+      document: { findUnique: jest.fn().mockResolvedValue(null), findFirst: jest.fn().mockResolvedValue(null) },
       $transaction: jest.fn(async (callback: (client: typeof tx) => unknown) => callback(tx)),
     };
     storage = {
@@ -133,7 +135,198 @@ describe('DocumentsService', () => {
       status: 422,
     });
   });
+
+  describe('update', () => {
+    beforeEach(() => {
+      prisma.document.findFirst = jest.fn().mockResolvedValue(existing());
+      tx.document.update = jest.fn(async ({ data }: { data: Record<string, unknown> }) => ({
+        ...existing(),
+        ...data,
+        updatedAt: new Date('2026-11-01T00:00:00.000Z'),
+      }));
+    });
+
+    it('rechaza un documento de otro usuario', async () => {
+      prisma.document.findFirst = jest.fn().mockResolvedValue(null);
+
+      await expect(
+        service.update('user-1', 'doc-1', file(), dto()),
+      ).rejects.toMatchObject({ code: 'DOCUMENT_NOT_FOUND', status: 404 });
+
+      expect(storage.put).not.toHaveBeenCalled();
+    });
+
+    it('rechaza actualizar mientras el documento se está procesando', async () => {
+      prisma.document.findFirst = jest.fn().mockResolvedValue(existing({ status: 'PROCESSING' }));
+
+      await expect(
+        service.update('user-1', 'doc-1', file(), dto()),
+      ).rejects.toMatchObject({ code: 'INVALID_STATE', status: 409 });
+
+      expect(storage.put).not.toHaveBeenCalled();
+      expect(tx.outboxEvent.create).not.toHaveBeenCalled();
+    });
+
+    it('no reprocesa cuando el contenido y los metadatos no cambian', async () => {
+      const current = existing();
+      prisma.document.findFirst = jest.fn().mockResolvedValue(current);
+
+      const result = await service.update(
+        'user-1',
+        'doc-1',
+        file({ buffer: Buffer.from('contenido') }),
+        dto({ title: current.title, categories: JSON.stringify(current.categories) }),
+      );
+
+      expect(result.status).toBe('INDEXED');
+      expect(storage.put).not.toHaveBeenCalled();
+      expect(storage.delete).not.toHaveBeenCalled();
+      expect(tx.document.update).not.toHaveBeenCalled();
+      expect(tx.outboxEvent.create).not.toHaveBeenCalled();
+      expect(outbox.dispatchDocument).not.toHaveBeenCalled();
+    });
+
+    it('reemplaza el contenido, invalida el texto normalizado y reencola', async () => {
+      const current = existing();
+
+      const result = await service.update(
+        'user-1',
+        'doc-1',
+        file({
+          originalname: 'manual-v2.md',
+          mimetype: 'text/markdown',
+          buffer: Buffer.from('# Nueva version'),
+        }),
+        dto({ title: 'Manual v2' }),
+      );
+
+      expect(storage.delete).toHaveBeenCalledWith(current.normalizedTextKey);
+      expect(storage.put).toHaveBeenCalledWith(
+        `documents/user-1/doc-1/original.md`,
+        expect.any(Buffer),
+        'text/markdown',
+      );
+      expect(tx.outboxEvent.create).toHaveBeenCalledWith({ data: { documentId: 'doc-1' } });
+      expect(outbox.dispatchDocument).toHaveBeenCalledWith('doc-1');
+
+      expect(tx.document.update).toHaveBeenCalledWith({
+        where: { id: 'doc-1' },
+        data: expect.objectContaining({
+          title: 'Manual v2',
+          status: 'PROCESSING',
+          indexedAt: null,
+          objectKey: 'documents/user-1/doc-1/original.md',
+          size: Buffer.byteLength('# Nueva version'),
+        }),
+      });
+      expect(result.status).toBe('PROCESSING');
+    });
+
+    it('solo reindexa cuando cambian los metadatos', async () => {
+      const current = existing();
+
+      const result = await service.update(
+        'user-1',
+        'doc-1',
+        file({ buffer: Buffer.from('contenido') }),
+        dto({ title: 'Titulo corregido' }),
+      );
+
+      // El texto normalizado se conserva: el worker lo reutiliza.
+      expect(storage.delete).not.toHaveBeenCalled();
+      // El contenido no cambió: no se vuelve a escribir el original.
+      expect(storage.put).not.toHaveBeenCalled();
+      expect(tx.outboxEvent.create).toHaveBeenCalledWith({ data: { documentId: 'doc-1' } });
+      expect(tx.document.update).toHaveBeenCalledWith({
+        where: { id: 'doc-1' },
+        data: expect.objectContaining({
+          title: 'Titulo corregido',
+          checksum: current.checksum,
+          status: 'PROCESSING',
+        }),
+      });
+      expect(result.status).toBe('PROCESSING');
+    });
+
+    it('permite actualizar sin archivo para corregir metadatos', async () => {
+      await service.update('user-1', 'doc-1', undefined, dto({ title: 'Solo metadatos' }));
+
+      expect(storage.put).not.toHaveBeenCalled();
+      expect(storage.delete).not.toHaveBeenCalled();
+      expect(tx.outboxEvent.create).toHaveBeenCalledWith({ data: { documentId: 'doc-1' } });
+    });
+
+    it('rechaza un formato no admitido', async () => {
+      await expect(
+        service.update('user-1', 'doc-1', file({ originalname: 'script.exe' }), dto()),
+      ).rejects.toMatchObject({ code: 'UNSUPPORTED_FILE_TYPE', status: 415 });
+
+      expect(storage.put).not.toHaveBeenCalled();
+      expect(tx.document.update).not.toHaveBeenCalled();
+    });
+
+    it('rechaza un archivo vacío', async () => {
+      await expect(
+        service.update('user-1', 'doc-1', file({ buffer: Buffer.alloc(0) }), dto()),
+      ).rejects.toMatchObject({ code: 'EMPTY_FILE', status: 422 });
+    });
+  });
 });
+
+interface ExistingDocument {
+  id: string;
+  userId: string;
+  title: string;
+  description: string | null;
+  author: string | null;
+  category: string | null;
+  categories: string[];
+  version: string | null;
+  tags: string[];
+  originalFilename: string;
+  idempotencyKey: string | null;
+  status: string;
+  checksum: string;
+  mime: string;
+  size: number;
+  bucket: string;
+  objectKey: string;
+  normalizedTextKey: string | null;
+  errorCode: string | null;
+  errorMessage: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+  indexedAt: Date | null;
+}
+
+function existing(overrides: Partial<ExistingDocument> = {}): ExistingDocument {
+  return {
+    id: 'doc-1',
+    userId: 'user-1',
+    title: 'Documento de prueba',
+    description: null,
+    author: null,
+    category: null,
+    categories: [],
+    version: null,
+    tags: [],
+    originalFilename: 'notas.txt',
+    idempotencyKey: null,
+    status: 'INDEXED',
+    checksum: createHash('sha256').update('contenido').digest('hex'),
+    mime: 'text/plain',
+    size: 9,
+    bucket: 'test-bucket',
+    objectKey: 'documents/user-1/doc-1/original.txt',
+    normalizedTextKey: 'documents/user-1/doc-1/normalized.txt',
+    errorCode: null,
+    errorMessage: null,
+    createdAt: new Date('2026-10-28T00:00:00.000Z'),
+    updatedAt: new Date('2026-10-28T00:00:00.000Z'),
+    indexedAt: new Date('2026-10-28T00:00:10.000Z'),
+    ...overrides,
+  };
+}
 
 function dto(overrides: Partial<CreateDocumentDto> = {}): CreateDocumentDto {
   return { title: 'Documento de prueba', ...overrides } as CreateDocumentDto;

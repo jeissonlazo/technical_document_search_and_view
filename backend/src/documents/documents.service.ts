@@ -45,43 +45,16 @@ export class DocumentsService {
     if (!file) {
       throw new AppError('FILE_REQUIRED', 'No se recibió ningún archivo.', 422, false);
     }
-    if (!file.buffer?.length) {
-      throw new AppError('EMPTY_FILE', 'El archivo está vacío.', 422, false);
-    }
 
-    const maxSize = this.config.getOrThrow<number>('limits.maxFileSizeBytes');
-    if (file.size > maxSize) {
-      throw new AppError(
-        'FILE_TOO_LARGE',
-        `El archivo supera el tamaño máximo permitido de ${Math.round(maxSize / 1024 / 1024)} MB.`,
-        413,
-        false,
-        { maxSize },
-      );
-    }
-
-    const originalFilename = validateFilename(file.originalname);
-    const extension = extname(originalFilename).toLowerCase();
-    if (!ALLOWED_EXTENSIONS.has(extension)) {
-      throw new AppError(
-        'UNSUPPORTED_FILE_TYPE',
-        'El formato no está admitido. Sube TXT, PDF, Markdown o DOCX.',
-        415,
-        false,
-      );
-    }
-
-    this.validateContent(file.buffer, extension);
+    const inspected = this.inspectFile(file);
     const categories = normalizeCategories(dto.categories, dto.category);
 
     const documentId = randomUUID();
     const bucket = this.config.getOrThrow<string>('r2.bucket');
-    const objectKey = `documents/${userId}/${documentId}/original${extension}`;
+    const objectKey = `documents/${userId}/${documentId}/original${inspected.extension}`;
     const normalizedTextKey = `documents/${userId}/${documentId}/normalized.txt`;
-    const checksum = createHash('sha256').update(file.buffer).digest('hex');
-    const mime = file.mimetype || mimeForExtension(extension);
 
-    await this.storage.put(objectKey, file.buffer, mime);
+    await this.storage.put(objectKey, file.buffer, inspected.mime);
 
     let document: PrismaDocument;
     try {
@@ -97,11 +70,11 @@ export class DocumentsService {
             categories,
             version: dto.version?.trim() || null,
             tags: splitTags(dto.tags),
-            originalFilename,
+            originalFilename: inspected.originalFilename,
             idempotencyKey: key,
-            mime,
+            mime: inspected.mime,
             size: file.size,
-            checksum,
+            checksum: inspected.checksum,
             bucket,
             objectKey,
             normalizedTextKey,
@@ -280,12 +253,177 @@ export class DocumentsService {
     return toMetadata(updated);
   }
 
+  /**
+   * Reemplaza el contenido y/o los metadatos de un documento existente y lo
+   * vuelve a procesar. No crea una fila nueva: el mismo `id` se reindexa.
+   */
+  async update(
+    userId: string,
+    id: string,
+    file: Express.Multer.File | undefined,
+    dto: CreateDocumentDto,
+  ): Promise<DocumentMetadata> {
+    const current = await this.findOwned(userId, id);
+
+    // Un trabajo en curso podría indexar el contenido anterior y dejar
+    // el documento con texto viejo; se espera a que termine.
+    if (current.status === 'PROCESSING' || current.status === 'RECEIVED') {
+      throw new AppError(
+        'INVALID_STATE',
+        'El documento se está procesando. Espera a que termine para actualizarlo.',
+        409,
+        true,
+      );
+    }
+
+    const categories = normalizeCategories(dto.categories, dto.category);
+    const metadata = {
+      title: dto.title.trim(),
+      description: dto.description?.trim() || null,
+      author: dto.author?.trim() || null,
+      category: categories[0] ?? null,
+      categories,
+      version: dto.version?.trim() || null,
+      tags: splitTags(dto.tags),
+    };
+
+    const inspected = file ? this.inspectFile(file) : null;
+    const contentChanged = inspected ? inspected.checksum !== current.checksum : false;
+    const metadataChanged =
+      metadata.title !== current.title ||
+      metadata.description !== current.description ||
+      metadata.author !== current.author ||
+      metadata.category !== current.category ||
+      metadata.version !== current.version ||
+      !sameList(metadata.categories, current.categories) ||
+      !sameList(metadata.tags, current.tags);
+
+    if (!contentChanged && !metadataChanged) {
+      // Nada que reindexar: no se toca el estado ni se encola un trabajo.
+      return toMetadata(current);
+    }
+
+    // El texto normalizado anterior deja de ser válido. Se borra antes de
+    // escribir el original para que el worker vuelva a extraer del archivo;
+    // si falla, no se cambia nada en la base de datos.
+    if (contentChanged && current.normalizedTextKey) {
+      await this.storage.delete(current.normalizedTextKey);
+    }
+
+    const objectKey = inspected
+      ? `documents/${userId}/${current.id}/original${inspected.extension}`
+      : current.objectKey;
+
+    // Se reescribe el original si cambió el contenido o la extensión del
+    // archivo; si solo cambiaron los metadatos no hace falta tocar R2.
+    const mustWriteObject = Boolean(file) && (contentChanged || current.objectKey !== objectKey);
+    if (mustWriteObject && file) {
+      await this.storage.put(objectKey, file.buffer, inspected!.mime);
+    }
+
+    let updated: PrismaDocument;
+    try {
+      updated = await this.prisma.$transaction(async (tx) => {
+        const doc = await tx.document.update({
+          where: { id: current.id },
+          data: {
+            ...metadata,
+            ...(inspected && file
+              ? {
+                  originalFilename: inspected.originalFilename,
+                  mime: inspected.mime,
+                  size: file.size,
+                  checksum: inspected.checksum,
+                  objectKey,
+                }
+              : {}),
+            status: 'PROCESSING',
+            errorCode: null,
+            errorMessage: null,
+            indexedAt: null,
+          },
+        });
+
+        await tx.outboxEvent.create({ data: { documentId: doc.id } });
+        return doc;
+      });
+    } catch (error) {
+      // El original ya se reemplazó y el texto normalizado se invalidó: el
+      // siguiente procesamiento reextrae el contenido nuevo. Un reintento del
+      // cliente vuelve a intentar la actualización.
+      throw error;
+    }
+
+    // Si cambió la extensión, el objeto anterior queda huérfano.
+    if (inspected && current.objectKey !== objectKey) {
+      try {
+        await this.storage.delete(current.objectKey);
+      } catch {
+        // Un objeto huérfano no afecta al documento; se limpia aparte.
+      }
+    }
+
+    try {
+      await this.outbox.dispatchDocument(updated.id);
+    } catch {
+      // El reconciliador reintentará la publicación.
+    }
+
+    return toMetadata(updated);
+  }
+
   private async findOwned(userId: string, id: string): Promise<PrismaDocument> {
     const document = await this.prisma.document.findFirst({ where: { id, userId } });
     if (!document) {
       throw new AppError('DOCUMENT_NOT_FOUND', 'El documento no existe o no tienes acceso.', 404, false);
     }
     return document;
+  }
+
+  /**
+   * Valida el archivo recibido y devuelve los datos derivados que se
+   * persisten. Compartido por la carga y la actualización.
+   */
+  private inspectFile(file: Express.Multer.File): {
+    originalFilename: string;
+    extension: string;
+    checksum: string;
+    mime: string;
+  } {
+    if (!file.buffer?.length) {
+      throw new AppError('EMPTY_FILE', 'El archivo está vacío.', 422, false);
+    }
+
+    const maxSize = this.config.getOrThrow<number>('limits.maxFileSizeBytes');
+    if (file.size > maxSize) {
+      throw new AppError(
+        'FILE_TOO_LARGE',
+        `El archivo supera el tamaño máximo permitido de ${Math.round(maxSize / 1024 / 1024)} MB.`,
+        413,
+        false,
+        { maxSize },
+      );
+    }
+
+    const originalFilename = validateFilename(file.originalname);
+    const extension = extname(originalFilename).toLowerCase();
+    if (!ALLOWED_EXTENSIONS.has(extension)) {
+      throw new AppError(
+        'UNSUPPORTED_FILE_TYPE',
+        'El formato no está admitido. Sube TXT, PDF, Markdown o DOCX.',
+        415,
+        false,
+      );
+    }
+
+    this.validateContent(file.buffer, extension);
+
+    return {
+      originalFilename,
+      extension,
+      checksum: createHash('sha256').update(file.buffer).digest('hex'),
+      mime: file.mimetype || mimeForExtension(extension),
+    };
   }
 
   private validateContent(buffer: Buffer, extension: string): void {
@@ -466,7 +604,8 @@ function formatValidationErrors(errors: ValidationError[]): string[] {
   });
 }
 
-function splitTags(tags?: string): string[] {  if (!tags) return [];
+function splitTags(tags?: string): string[] {
+  if (!tags) return [];
   return Array.from(
     new Set(
       tags
@@ -475,6 +614,11 @@ function splitTags(tags?: string): string[] {  if (!tags) return [];
         .filter(Boolean),
     ),
   ).slice(0, 20);
+}
+
+/** Compara dos listas de la misma forma en que se persisten. */
+function sameList(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
 function normalizeCategories(raw?: string, legacy?: string): string[] {

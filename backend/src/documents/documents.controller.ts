@@ -7,6 +7,7 @@ import {
   HttpStatus,
   Param,
   Post,
+  Put,
   Res,
   UploadedFile,
   UploadedFiles,
@@ -58,6 +59,23 @@ export class DocumentsController {
     @Body('metadata') metadata: string | undefined,
   ) {
     return this.documents.createBatch(user.id, files, metadata);
+  }
+
+  @Put(':id')
+  @HttpCode(HttpStatus.ACCEPTED)
+  @UseGuards(CsrfGuard)
+  @UseInterceptors(
+    FileInterceptor('file', {
+      limits: { fileSize: 30 * 1024 * 1024 },
+    }),
+  )
+  update(
+    @CurrentUser() user: AuthContext['user'],
+    @Param('id') id: string,
+    @UploadedFile() file: Express.Multer.File | undefined,
+    @Body() dto: CreateDocumentDto,
+  ) {
+    return this.documents.update(user.id, id, file, dto);
   }
 
   @Get(':id')

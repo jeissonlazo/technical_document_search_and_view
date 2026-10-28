@@ -2,7 +2,7 @@ import { Component, computed, inject, input, model, output } from '@angular/core
 import { FormsModule } from '@angular/forms';
 import { RouterLink } from '@angular/router';
 import { NgIcon } from '@ng-icons/core';
-import { lucideFileDown, lucideFilePlus2, lucideFileText, lucideUpload } from '@ng-icons/lucide';
+import { lucideFileDown, lucideFilePenLine, lucideFilePlus2, lucideFileText, lucideUpload } from '@ng-icons/lucide';
 import { HlmBadge } from '@spartan-ng/helm/badge';
 import { HlmButton } from '@spartan-ng/helm/button';
 import {
@@ -129,12 +129,23 @@ import type { DraftMetadata, DraftStatus } from '../editor.models';
             <span class="muted">{{ i18n.t('editor.status') }}</span>
             @if (documentStatus(); as docStatus) {
               <app-document-status-badge [status]="docStatus" />
-            } @else if (status() === 'PUBLISHING') {
+            } @else if (busy()) {
               <span hlmBadge variant="outline" class="badge-warn">{{ i18n.t('upload.uploading') }}</span>
             } @else {
               <span hlmBadge variant="outline">{{ i18n.t('editor.draft') }}</span>
             }
           </div>
+
+          @if (mode() === 'update') {
+            <div class="mt-2 flex items-center justify-between gap-2">
+              <span class="muted">{{ i18n.t('editor.changes') }}</span>
+              @if (dirty()) {
+                <span hlmBadge variant="outline" class="badge-warn">{{ i18n.t('editor.unsaved') }}</span>
+              } @else {
+                <span hlmBadge variant="outline" class="badge-ok">{{ i18n.t('editor.saved') }}</span>
+              }
+            </div>
+          }
         </div>
 
         @if (message()) {
@@ -155,11 +166,11 @@ import type { DraftMetadata, DraftStatus } from '../editor.models';
           hlmBtn
           type="button"
           class="w-full"
-          [disabled]="busy() || !canPublish()"
-          (click)="publish.emit()"
+          [disabled]="!canSave() || busy()"
+          (click)="save.emit()"
         >
-          <ng-icon [svg]="lucideUpload" />
-          {{ busy() ? i18n.t('upload.uploading') : i18n.t('editor.publish') }}
+          <ng-icon [svg]="mode() === 'update' ? lucideFilePenLine : lucideUpload" />
+          {{ saveLabel() }}
         </button>
 
         <div class="flex w-full gap-2">
@@ -189,7 +200,7 @@ import type { DraftMetadata, DraftStatus } from '../editor.models';
           </button>
         </div>
 
-        <p class="text-xs muted">{{ i18n.t('editor.publishHint') }}</p>
+        <p class="text-xs muted">{{ saveHint() }}</p>
       </div>
     </div>
   `,
@@ -198,14 +209,17 @@ export class EditorMetadataPanelComponent {
   readonly i18n = inject(I18nService);
 
   readonly metadata = model.required<DraftMetadata>();
+  readonly mode = input<'create' | 'update'>('create');
   readonly status = input.required<DraftStatus>();
   readonly filename = input.required<string>();
   readonly busy = input(false);
-  readonly canPublish = input(false);
+  readonly processing = input(false);
+  readonly dirty = input(false);
+  readonly canSave = input(false);
   readonly documentId = input<string | null>(null);
   readonly message = input('');
 
-  readonly publish = output<void>();
+  readonly save = output<void>();
   readonly download = output<void>();
   readonly newDraft = output<void>();
 
@@ -213,11 +227,27 @@ export class EditorMetadataPanelComponent {
   readonly lucideUpload = lucideUpload;
   readonly lucideFileDown = lucideFileDown;
   readonly lucideFilePlus2 = lucideFilePlus2;
+  readonly lucideFilePenLine = lucideFilePenLine;
 
   /** `IDLE` y `PUBLISHING` no son estados del documento en el API. */
   readonly documentStatus = computed<DocumentStatus | null>(() => {
     const status = this.status();
     return status === 'IDLE' || status === 'PUBLISHING' ? null : status;
+  });
+
+  readonly saveLabel = computed(() => {
+    if (this.busy()) return this.i18n.t('upload.uploading');
+    if (this.mode() === 'create') return this.i18n.t('editor.publish');
+    if (this.processing()) return this.i18n.t('editor.processing');
+    if (this.dirty()) return this.i18n.t('editor.update');
+    return this.i18n.t('editor.upToDate');
+  });
+
+  readonly saveHint = computed(() => {
+    if (this.mode() === 'create') return this.i18n.t('editor.publishHint');
+    if (this.processing()) return this.i18n.t('editor.processingHint');
+    if (this.dirty()) return this.i18n.t('editor.updateHint');
+    return this.i18n.t('editor.savedHint');
   });
 
   patch<K extends keyof DraftMetadata>(key: K, value: DraftMetadata[K]): void {
