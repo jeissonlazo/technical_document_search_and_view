@@ -1,86 +1,44 @@
-# Uso de Inteligencia Artificial
+# Uso de inteligencia artificial
 
-**Proyecto:** Buscador y visor de documentos técnicos  
-**Versión:** 1.0  
-**Fecha:** 2026-10-28
+## Herramientas utilizadas
 
-Este documento registra de forma transparente qué herramientas de IA se usaron, para qué, con qué prompts y cómo se validó el resultado. Debe actualizarse si se incorporan nuevas herramientas o si cambia el alcance.
+- **OpenAI Codex (asistente de IA en esta conversación):** lectura y análisis del enunciado de la prueba, organización de requisitos, discusión de decisiones técnicas y redacción/actualización de `docs/decisiones-tecnicas.md` y `docs/architecture.md`.
+- **Herramientas auxiliares de lectura de PDF:** se intentó extraer texto del PDF con `pdfplumber`; al no contener texto seleccionable, se renderizaron sus páginas y se revisaron visualmente. Estas herramientas ayudaron a leer el documento; no generaron código del producto.
 
-## 1. Herramientas utilizadas
+No se usó IA para generar código de aplicación, datos de prueba, resultados de rendimiento ni resultados de pruebas automatizadas durante esta etapa de definición.
 
-| Herramienta | Versión / modelo | Uso principal |
-| --- | --- | --- |
-| DeepSeek Harness | Modelo DeepSeek Flash | Análisis de requisitos, revisión de arquitectura, validación de librerías, generación de esqueleto de código y documentación |
-| Completar por el candidato | — | Añadir aquí ChatGPT, Claude, Copilot, Cursor, Gemini u otras herramientas que se hayan usado |
+## Casos de uso de IA
 
-No se pegaron documentos reales, credenciales, claves de R2 ni datos personales en los prompts. Los ejemplos de prompts se describen de forma resumida.
+1. **Comprender y desglosar el enunciado:** convertir las historias de usuario, restricciones y criterios de aceptación de la prueba en una lista de tareas.
+2. **Explorar decisiones técnicas:** contrastar alternativas de búsqueda, carga secuencial, procesamiento asíncrono, estados, notificaciones SSE, almacenamiento y escalabilidad.
+3. **Redactar documentación técnica:** preparar borradores de decisiones, flujos, catálogos de errores, criterios de aceptación y evolución de arquitectura.
+4. **Revisar consistencia entre requisitos:** detectar contradicciones al cambiar decisiones, como el límite de cantidad del lote, los estados persistidos y el número de reintentos.
 
-## 2. Casos de uso
+## Prompts relevantes
 
-1. **Lectura y contraste de requisitos.** Se usó IA para comparar el enunciado de la prueba con `docs/architecture.md` y `docs/decisiones-tecnicas.md`, detectar contradicciones (por ejemplo, `RECEIVED` frente a `PROCESANDO`) y proponer correcciones.
-2. **Diseño de arquitectura.** Se revisaron alternativas de motor de búsqueda, cola, SSE, autenticación, almacenamiento y visores. Las decisiones finales fueron confirmadas por el candidato.
-3. **Validación de librerías.** Se consultaron fuentes públicas para verificar compatibilidad de Optimus UI, Spartan NG, Tiptap, `docx-editor`, `docx-preview` y sus licencias. Se descartaron las opciones que no encajaban con Angular o con el modo solo lectura.
-4. **Redacción de requerimientos.** Se incorporaron R2 como almacenamiento principal, autenticación mínima con API keys, i18n, temas y criterios de aceptación.
-5. **Generación de esqueleto.** Se creó la estructura del monorepo, entidades Prisma, módulos NestJS, servicios Angular y archivos de Docker/Compose.
-6. **Pruebas y documentación.** Se generaron pruebas unitarias del extractor y borradores de README, arquitectura y este documento.
+Los siguientes ejemplos son solicitudes representativas hechas durante la conversación; se incluyen resumidos para registrar su propósito, no como especificación independiente:
 
-## 3. Prompts clave
+- “Lee este documento y genera una lista de cosas por hacer para llevarlo a cabo de la mejor manera.”
+- “Define parámetros técnicos para la capacidad de carga y documenta las decisiones en `docs/`.”
+- “La carga masiva debe ser administrada por el frontend como una cola; no empezar un archivo hasta que termine la subida del anterior.”
+- “Define formatos admitidos y qué hacer si un PDF no permite extraer texto.”
+- “Diseña los estados, causas descriptivas de error y la regla de que un fallo no bloquee la subida de más archivos.”
+- “Documenta el stack, el flujo de carga a búsqueda, la estrategia indexada y la escalabilidad por componente.”
+- “Valida que `docs/architecture.md` incluya diagrama, razones del stack, tiempo real y escalabilidad.”
 
-Estos son ejemplos resumidos; no incluyen datos sensibles.
+Las propuestas se refinaron mediante instrucciones posteriores. En particular, se retiró el límite inicial sugerido de 50 MiB porque no provenía del enunciado; se cambió el lote de cantidad sin límite a un máximo configurable pendiente de medición; se separó la subida secuencial del procesamiento en workers; y se actualizaron estados y política de reintentos según las decisiones posteriores.
 
-### 3.1. Revisión de viabilidad
+## Revisión y validación humana
 
-> “Lee los archivos del workspace y verifica su viabilidad para el proyecto que plantea el enunciado. Señala contradicciones, requisitos faltantes y riesgos de plazo.”
+- El PDF original fue revisado visualmente página por página después de que la extracción automática devolviera páginas sin texto.
+- Las propuestas de capacidad se identificaron como provisionales cuando el enunciado no daba valores. No se presentaron cifras de rendimiento ni límites como resultados medidos.
+- Las decisiones principales fueron revisadas y dirigidas por el usuario a través de correcciones sucesivas: cola de frontend con una subida a la vez, errores aislados por archivo, estados `RECEIVED`/`PROCESSING`/`INDEXED`/`ERROR`, hasta tres reintentos adicionales para errores transitorios y Cloudflare R2 para entornos desplegados.
+- Se revisó la consistencia documental buscando referencias antiguas a límites, estados y reintentos después de actualizar las decisiones.
+- La IA produjo borradores; las decisiones de alcance y tecnología documentadas reflejan las instrucciones y aprobaciones expresas del usuario, no una autoridad automática del modelo.
 
-**Refinamiento:** se añadió el enunciado en PDF y se pidió una tabla de cumplimiento por historia de usuario.
+## Límites y responsabilidad
 
-### 3.2. Validación de librerías
-
-> “Valida si `docx-editor` se puede usar en Angular y si permite solo lectura. Compara con `docx-preview` y `mammoth`, indicando licencia, compatibilidad y coste.”
-
-**Resultado:** `docx-editor` es React/Vue y está orientado a edición; se eligió `docx-preview` para el visor y `mammoth` para extracción.
-
-### 3.3. UI y versiones
-
-> “Compara Optimus UI y Spartan NG para Angular 22. Indica peer dependencies, componentes disponibles, theming y riesgos de mantenimiento.”
-
-**Resultado:** Spartan NG 1.8.3 declara Angular `>=21 <23`; se adoptó Spartan NG y se anotó el riesgo del CLI con Angular 22.
-
-### 3.4. Almacenamiento
-
-> “Añade Cloudflare R2 como almacenamiento principal de originales y texto normalizado. Define claves, URLs firmadas, CORS, Range, ciclo de vida y variables de entorno.”
-
-**Resultado:** se actualizaron los tres documentos y se generó la interfaz `ObjectStorage` con implementación R2.
-
-### 3.5. Generación del esqueleto
-
-> “Genera un monorepo con backend NestJS, frontend Angular 22 + Spartan NG, Prisma, BullMQ, Elasticsearch, SSE, autenticación mínima y R2. Incluye Docker Compose y README.”
-
-**Resultado:** estructura `backend/`, `frontend/`, `packages/shared/`, `docker-compose.yml` y documentación asociada.
-
-## 4. Validación humana
-
-La validación se realizó en dos niveles:
-
-1. **Decisiones de producto y arquitectura:** el candidato confirmó el uso de R2, la autenticación mínima con sign up/sign in y API keys, y Spartan NG. La IA propuso alternativas y señaló riesgos, pero las decisiones finales fueron humanas.
-2. **Revisión técnica:** se contrastaron las afirmaciones sobre librerías con su documentación pública y se corrigieron puntos como:
-   - el estado inicial `PROCESSING` frente a `RECEIVED` heredado de la arquitectura anterior (resuelto a favor de HU-01);
-   - el resaltado obligatorio en fragmentos de resultados frente al resaltado dentro del visor DOCX;
-   - el alcance de DOCX y la conveniencia de `docx-preview` frente a un editor WYSIWYG;
-   - la compatibilidad de Spartan NG con Angular 22 y el riesgo del CLI.
-
-**Validación ejecutada:** `pnpm install`, `prisma generate`, `prisma migrate deploy`, seed, build de NestJS, build de Angular y pruebas unitarias (28/28). El stack Docker se levantó con `docker compose up --build -d`; API healthy, frontend servido por nginx, login/sesión y SSE verificados. R2 quedó operativo en `katabuscador` y se probó el flujo completo con TXT, PDF y Markdown, además de `POST /api/documents/batch` con un archivo aceptado y uno rechazado sin afectar al primero. Se validaron el smoke test `e2e:pipeline`, la idempotencia de carga, la recuperación del outbox con Redis caído, la reindexación con alias y el benchmark de búsqueda (`docs/search-latency.md`). DOCX se probó como soporte opcional, fuera de la aceptación de la v1. La verificación consolidada está en `docs/validacion-final.md`.
-
-**Pendiente de validación humana:** rotar el token de Cloudflare compartido en el chat, crear un R2 API token dedicado para producción, configurar CORS si se usan URLs firmadas directas y completar pruebas e2e de navegador/medición de latencia.
-
-## 5. Limitaciones y riesgos
-
-- La IA puede proponer versiones de dependencias que no existan o que hayan cambiado; se deben verificar con `pnpm install` y el registro de npm.
-- El código generado es un esqueleto y requiere revisión, pruebas y ajustes de integración.
-- Las decisiones de seguridad (CSRF, cookies, API keys, R2) deben revisarse con un threat model antes de producción.
-- Los prompts no sustituyen la lectura del enunciado ni la validación con el evaluador.
-- Las métricas de latencia y la fidelidad de los visores deben medirse con documentos reales.
-
-## 6. Conclusión
-
-La IA se usó como apoyo para análisis, contraste de decisiones, generación de esqueleto y documentación. La responsabilidad sobre la arquitectura, el código y las decisiones finales es del candidato. Este documento se actualizará cuando se ejecuten las pruebas y se complete la validación humana.
+- Las recomendaciones de arquitectura y escalabilidad son propuestas de diseño, no evidencia de capacidad. La cantidad máxima por lote, el tamaño máximo por archivo, la concurrencia y la latencia real requieren pruebas con un conjunto representativo y una infraestructura definida.
+- La interpretación de objetivos p95 y los presupuestos de latencia son propuestas de ingeniería; el enunciado no especifica percentiles ni todas las condiciones de medición y deben validarse con el evaluador.
+- No se ejecutaron pruebas del sistema ni mediciones de carga durante esta fase de documentación.
+- El usuario/equipo responsable debe revisar las decisiones antes de implementarlas y validar versiones, costos, seguridad y configuración de los servicios para el entorno concreto.
