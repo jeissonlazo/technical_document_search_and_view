@@ -322,7 +322,7 @@ pnpm build
 pnpm test
 ```
 
-Incluye pruebas unitarias del extractor (TXT, Markdown, BOM, formatos no admitidos, archivo vacío) y del worker (idempotencia, retry transitorio, error terminal y camino exitoso). Las pruebas e2e de navegador, la búsqueda dentro de PDF y el benchmark de latencia quedan pendientes.
+Incluye pruebas unitarias del extractor (TXT, Markdown, BOM, formatos no admitidos, archivo vacío), del worker (idempotencia, retry transitorio, error terminal y camino exitoso) y del nombre de archivo (rutas, reservados, caracteres especiales, longitud). Las pruebas e2e de navegador, la búsqueda dentro de PDF y el benchmark de latencia quedan pendientes.
 
 ## 9. API principal
 
@@ -377,6 +377,14 @@ curl -X POST http://localhost:4200/api/documents/batch \
 `metadata` debe ser un arreglo JSON con la misma cantidad y orden que `files[]`. Cada elemento admite `title` (obligatorio), `author`, `category`, `tags` (string o arreglo) y `version`. La respuesta es `202` con `total`, `accepted`, `failed` y `results`; un fallo no cancela los demás archivos.
 
 Límites: 20 archivos, 25 MB por archivo y 100 MB totales por defecto. Angular **no usa** este endpoint: mantiene una solicitud por archivo y subida secuencial.
+
+### Validaciones de carga
+
+- Formato por extensión y contenido real: PDF (`%PDF-`), TXT/Markdown UTF-8 y DOCX opcional (ZIP).
+- Tamaño por archivo y por lote; cantidad máxima de archivos.
+- `title` obligatorio; `author`, `category`, `tags` y `version` opcionales con límites de longitud.
+- Nombre de archivo: sin rutas, caracteres de control, nombres reservados de Windows ni longitud excesiva. El nombre saneado se guarda como `originalFilename`; la clave de R2 usa UUID y extensión.
+- Los errores devuelven `code`, `message`, `retryable` y `supportRef`; en batch, cada archivo tiene su propio resultado.
 
 ## 10. Flujo de carga
 

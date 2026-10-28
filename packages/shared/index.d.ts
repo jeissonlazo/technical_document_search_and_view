@@ -19,6 +19,7 @@ export interface DocumentMetadata {
   category?: string | null;
   version?: string | null;
   tags: string[];
+  originalFilename?: string | null;
   status: DocumentStatus;
   mime: string;
   size: number;

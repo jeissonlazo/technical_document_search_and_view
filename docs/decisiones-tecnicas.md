@@ -30,6 +30,9 @@ El backend devuelve un código estable, etapa, mensaje seguro, indicador `retrya
 | Código estable | Etapa / condición | Mensaje visible sugerido |
 | --- | --- | --- |
 | `UNSUPPORTED_FILE_TYPE` | Validación: extensión o tipo real distinto de TXT, PDF, Markdown o DOCX | “No se pudo procesar **{archivo}**: el formato no está admitido. Sube un archivo TXT, PDF, Markdown o DOCX.” |
+| `FILE_REQUIRED` | Validación: no se recibió ningún archivo | “No se recibió ningún archivo. Selecciona un documento e intenta de nuevo.” |
+| `INVALID_FILENAME` | Validación: nombre vacío, demasiado largo, con rutas, caracteres de control o nombre reservado | “No se pudo procesar **{archivo}**: el nombre del archivo no es válido. Renómbralo y vuelve a intentarlo.” |
+| `INVALID_MULTIPART` | Validación: cuerpo multipart mal formado o campo de archivo inesperado | “La solicitud de carga no es válida. Revisa el archivo y los campos enviados.” |
 | `FILE_TOO_LARGE` | Validación: supera el límite configurado por archivo | “No se pudo procesar **{archivo}**: supera el tamaño máximo permitido de {límite}.” |
 | `BATCH_TOO_LARGE` | Validación: el lote supera la cantidad de archivos o el tamaño total configurado | “No se pudo iniciar el lote: supera el límite de archivos o de tamaño total.” |
 | `EMPTY_FILE` | Validación: archivo sin contenido | “No se pudo procesar **{archivo}**: el archivo está vacío.” |

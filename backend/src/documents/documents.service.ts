@@ -10,7 +10,7 @@ import type {
   DocumentMetadata,
 } from '@docs/shared';
 import { plainToInstance } from 'class-transformer';
-import { validate } from 'class-validator';
+import { validate, type ValidationError } from 'class-validator';
 import { AppError } from '../common/app-error';
 import { PrismaService } from '../prisma/prisma.service';
 import { QueueService } from '../queue/queue.service';
@@ -33,7 +33,10 @@ export class DocumentsService {
     file: Express.Multer.File | undefined,
     dto: CreateDocumentDto,
   ): Promise<DocumentMetadata> {
-    if (!file || !file.buffer?.length) {
+    if (!file) {
+      throw new AppError('FILE_REQUIRED', 'No se recibió ningún archivo.', 422, false);
+    }
+    if (!file.buffer?.length) {
       throw new AppError('EMPTY_FILE', 'El archivo está vacío.', 422, false);
     }
 
@@ -48,7 +51,8 @@ export class DocumentsService {
       );
     }
 
-    const extension = extname(file.originalname).toLowerCase();
+    const originalFilename = validateFilename(file.originalname);
+    const extension = extname(originalFilename).toLowerCase();
     if (!ALLOWED_EXTENSIONS.has(extension)) {
       throw new AppError(
         'UNSUPPORTED_FILE_TYPE',
@@ -81,6 +85,7 @@ export class DocumentsService {
           category: dto.category?.trim() || null,
           version: dto.version?.trim() || null,
           tags: splitTags(dto.tags),
+          originalFilename,
           mime,
           size: file.size,
           checksum,
@@ -123,7 +128,7 @@ export class DocumentsService {
   ): Promise<BatchUploadResponse> {
     const batchFiles = files ?? [];
     if (batchFiles.length === 0) {
-      throw new AppError('EMPTY_FILE', 'No se recibió ningún archivo en el lote.', 422, false);
+      throw new AppError('FILE_REQUIRED', 'No se recibió ningún archivo en el lote.', 422, false);
     }
 
     const maxFiles = this.config.getOrThrow<number>('limits.maxBatchFiles');
@@ -159,14 +164,18 @@ export class DocumentsService {
         const validationErrors = await validate(dto, {
           whitelist: true,
           forbidNonWhitelisted: false,
+          stopAtFirstError: true,
         });
         if (validationErrors.length > 0) {
+          const messages = formatValidationErrors(validationErrors);
           throw new AppError(
             'INVALID_METADATA',
-            'Revisa los metadatos obligatorios del archivo.',
+            messages.length
+              ? messages.join(' ')
+              : 'Revisa los metadatos obligatorios del archivo.',
             422,
             false,
-            { index },
+            { index, fields: messages.join(' | ') },
           );
         }
 
@@ -330,8 +339,93 @@ function parseBatchMetadata(
   });
 }
 
-function splitTags(tags?: string): string[] {
-  if (!tags) return [];
+const RESERVED_FILENAMES = new Set([
+  'CON',
+  'PRN',
+  'AUX',
+  'NUL',
+  'COM1',
+  'COM2',
+  'COM3',
+  'COM4',
+  'COM5',
+  'COM6',
+  'COM7',
+  'COM8',
+  'COM9',
+  'LPT1',
+  'LPT2',
+  'LPT3',
+  'LPT4',
+  'LPT5',
+  'LPT6',
+  'LPT7',
+  'LPT8',
+  'LPT9',
+]);
+
+export function validateFilename(raw: string): string {
+  const filename = (raw ?? '').normalize('NFC').trim();
+
+  if (!filename) {
+    throw new AppError('INVALID_FILENAME', 'El archivo no tiene un nombre válido.', 422, false);
+  }
+
+  if (filename.length > 200) {
+    throw new AppError(
+      'INVALID_FILENAME',
+      'El nombre del archivo no puede superar 200 caracteres.',
+      422,
+      false,
+    );
+  }
+
+  if (
+    filename === '.' ||
+    filename === '..' ||
+    filename.includes('/') ||
+    filename.includes('\\') ||
+    /[\u0000-\u001F\u007F<>:"|?*\u202A-\u202E\u2066-\u2069]/.test(filename)
+  ) {
+    throw new AppError(
+      'INVALID_FILENAME',
+      'El nombre del archivo no es válido: no puede contener rutas ni caracteres especiales.',
+      422,
+      false,
+    );
+  }
+
+  if (/[. ]$/.test(filename)) {
+    throw new AppError(
+      'INVALID_FILENAME',
+      'El nombre del archivo no puede terminar en punto ni en espacio.',
+      422,
+      false,
+    );
+  }
+
+  const basename = filename.split('.')[0].toUpperCase();
+  if (RESERVED_FILENAMES.has(basename)) {
+    throw new AppError(
+      'INVALID_FILENAME',
+      'El nombre del archivo está reservado por el sistema operativo.',
+      422,
+      false,
+    );
+  }
+
+  return filename;
+}
+
+function formatValidationErrors(errors: ValidationError[]): string[] {
+  return errors.flatMap((error) => {
+    const own = error.constraints ? Object.values(error.constraints) : [];
+    const children = error.children?.length ? formatValidationErrors(error.children) : [];
+    return [...own, ...children];
+  });
+}
+
+function splitTags(tags?: string): string[] {  if (!tags) return [];
   return Array.from(
     new Set(
       tags
@@ -365,6 +459,7 @@ export function toMetadata(document: PrismaDocument): DocumentMetadata {
     category: document.category,
     version: document.version,
     tags: document.tags,
+    originalFilename: document.originalFilename,
     status: document.status as DocumentMetadata['status'],
     mime: document.mime,
     size: document.size,

@@ -23,6 +23,7 @@ async function bootstrap(): Promise<void> {
       whitelist: true,
       transform: true,
       forbidNonWhitelisted: false,
+      stopAtFirstError: true,
     }),
   );
   app.useGlobalFilters(new HttpExceptionFilter());

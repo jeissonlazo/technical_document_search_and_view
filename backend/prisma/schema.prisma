@@ -49,6 +49,7 @@ model Document {
   category          String?
   version           String?
   tags              String[]       @default([])
+  originalFilename  String?
   status            DocumentStatus @default(RECEIVED)
   mime              String
   size              Int

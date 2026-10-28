@@ -56,7 +56,7 @@ flowchart LR
 
 1. Angular permite seleccionar un lote de tamaño variable. Mantiene una cola local y envía un solo archivo a la vez. El archivo siguiente no empieza a subirse hasta que el backend responde al anterior.
 2. Angular envía cada archivo y sus metadatos a `POST /api/documents` como `multipart/form-data`.
-3. NestJS valida autorización, formato real, tamaño, campos y metadatos. Se aceptan TXT UTF-8, Markdown UTF-8 y PDF con texto extraíble. DOCX no es requisito de la v1; el código existente lo admite como soporte opcional. No se hace OCR en esta versión.
+3. NestJS valida autorización, formato real, tamaño, nombre de archivo, campos y metadatos. Se aceptan TXT UTF-8, Markdown UTF-8 y PDF con texto extraíble. DOCX no es requisito de la v1; el código existente lo admite como soporte opcional. El nombre se normaliza y se rechazan rutas, caracteres de control, nombres reservados y longitudes excesivas; la clave de R2 usa UUID y extensión, no el nombre original. No se hace OCR en esta versión.
 4. El backend conserva el original en Cloudflare R2 mediante AWS SDK para JavaScript y endpoint compatible con S3, detrás de una interfaz de almacenamiento. El bucket es privado; para tests offline se puede usar MinIO con la misma interfaz.
 5. PostgreSQL registra metadatos, clave de objeto estable, tamaño, MIME, checksum y estado inicial `RECEIVED`. La solicitud devuelve `202 Accepted` con el ID del documento solo cuando archivo y trabajo quedaron aceptados de forma recuperable.
 6. NestJS publica en BullMQ un trabajo que contiene el ID del documento y referencias necesarias, no los bytes del archivo. El estado pasa a `PROCESSING` mientras el trabajo espera o está activo. Si se implementa transactional outbox, el evento pendiente se escribe en PostgreSQL dentro de la misma transacción del registro; un dispatcher lo publica a Redis.
@@ -89,7 +89,7 @@ Cada documento aceptado crea un trabajo BullMQ independiente, identificado con e
 
 | Clase | Ejemplos | Tratamiento |
 | --- | --- | --- |
-| Permanente / requiere corregir el archivo | `UNSUPPORTED_FILE_TYPE`, `FILE_TOO_LARGE`, `BATCH_TOO_LARGE`, `EMPTY_FILE`, `INVALID_METADATA`, `DUPLICATE_FILE`, `FILE_CORRUPTED`, `PASSWORD_PROTECTED`, `UNSUPPORTED_ENCODING`, `NO_EXTRACTABLE_TEXT`, `OCR_REQUIRED`, `DOCX_CORRUPTED`, `DOCX_ENCRYPTED`, `DOCX_EXTRACTION_FAILED` o `STORAGE_OBJECT_NOT_FOUND`. | No reintentar automáticamente. Mostrar la causa y una acción correctiva. El usuario puede subir una versión corregida como nuevo intento. |
+| Permanente / requiere corregir el archivo | `UNSUPPORTED_FILE_TYPE`, `FILE_REQUIRED`, `FILE_TOO_LARGE`, `BATCH_TOO_LARGE`, `INVALID_MULTIPART`, `INVALID_FILENAME`, `EMPTY_FILE`, `INVALID_METADATA`, `DUPLICATE_FILE`, `FILE_CORRUPTED`, `PASSWORD_PROTECTED`, `UNSUPPORTED_ENCODING`, `NO_EXTRACTABLE_TEXT`, `OCR_REQUIRED`, `DOCX_CORRUPTED`, `DOCX_ENCRYPTED`, `DOCX_EXTRACTION_FAILED` o `STORAGE_OBJECT_NOT_FOUND`. | No reintentar automáticamente. Mostrar la causa y una acción correctiva. El usuario puede subir una versión corregida como nuevo intento. |
 | Transitorio / posiblemente recuperable | `UPLOAD_FAILED`, `STORAGE_UNAVAILABLE`, `QUEUE_UNAVAILABLE`, `PROCESSING_TIMEOUT`, `SEARCH_ENGINE_UNAVAILABLE`; otros fallos de infraestructura claramente temporales. | Permitir hasta 3 reintentos adicionales (4 intentos totales), con backoff exponencial y variación aleatoria (jitter), manteniendo idempotencia. Angular reintenta transferencias y BullMQ jobs aceptados; agotados los intentos se registra el error y la cola avanza. |
 | Desconocido | Error no clasificado de extracción o indexación. | Registrar una referencia de soporte; no marcar como recuperable sin evidencia. Si el job es idempotente, ofrecer reintento manual individual después de revisar la causa. |
 
@@ -246,12 +246,12 @@ El sistema aplica backpressure y límites configurables para tamaño por archivo
 
 | Tabla | Campos principales |
 | --- | --- |
-| `documents` | `id` UUID, `title`, `description`, `author`, `category`, `version`, `tags`, `status`, `mime`, `size`, `checksum`, `bucket`, `object_key`, `normalized_text_key`, `error_code`, `error_message`, `created_at`, `updated_at`, `indexed_at` |
+| `documents` | `id` UUID, `title`, `description`, `author`, `category`, `version`, `tags`, `original_filename`, `status`, `mime`, `size`, `checksum`, `bucket`, `object_key`, `normalized_text_key`, `error_code`, `error_message`, `created_at`, `updated_at`, `indexed_at` |
 | `users` | `id`, `email` único, `password_hash`, `created_at`, `disabled_at` |
 | `api_keys` | `id`, `user_id`, `name`, `prefix`, `key_hash`, `last_used_at`, `expires_at`, `revoked_at` |
 | `sessions` (Redis) | `sid`, `user_id`, `created_at`, `last_seen_at`, TTL deslizante |
 
-`tags` se almacena como arreglo/JSON y se indexa como `keyword`; `version` es un string de metadatos, no un historial de versiones. `description` se indexa y se pondera junto con título y contenido.
+`tags` se almacena como arreglo/JSON y se indexa como `keyword`; `version` es un string de metadatos, no un historial de versiones. `description` se indexa y se pondera junto con título y contenido. `original_filename` conserva el nombre saneado para mostrarlo y auditar; la clave de R2 usa el UUID y la extensión, no el nombre original.
 
 ## Contratos de API propuestos
 

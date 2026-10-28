@@ -68,6 +68,9 @@ import { PdfViewerComponent } from './pdf-viewer.component';
               @if (doc.category) {
                 <div><dt class="muted">{{ i18n.t('viewer.category') }}</dt><dd>{{ doc.category }}</dd></div>
               }
+              @if (doc.originalFilename) {
+                <div><dt class="muted">{{ i18n.t('viewer.filename') }}</dt><dd class="break-all">{{ doc.originalFilename }}</dd></div>
+              }
               @if (doc.version) {
                 <div><dt class="muted">{{ i18n.t('viewer.version') }}</dt><dd>{{ doc.version }}</dd></div>
               }
