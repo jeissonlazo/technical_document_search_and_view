@@ -9,6 +9,8 @@ import type { DocumentStatus, SearchFacets, SearchHit } from '@docs/shared';
 import { ApiService, type DocumentDetail } from '../../core/api.service';
 import { apiErrorMessage } from '../../core/api-error';
 import { I18nService } from '../../core/i18n.service';
+import { DocumentIconComponent } from '../../shared/document/document-icon.component';
+import { SearchResultsComponent } from './components/search-results.component';
 
 const EMPTY_FACETS: SearchFacets = { categories: [], tags: [], authors: [] };
 type ViewMode = 'list' | 'grid' | 'details';
@@ -17,7 +19,7 @@ type SortMode = 'relevance' | 'title' | 'date';
 @Component({
   selector: 'app-search',
   standalone: true,
-  imports: [FormsModule, RouterLink],
+  imports: [FormsModule, RouterLink, SearchResultsComponent, DocumentIconComponent],
   template: `
     <section class="space-y-5">
       <div>
@@ -180,83 +182,15 @@ type SortMode = 'relevance' | 'title' | 'date';
             </div>
           </div>
 
-          @if (loading()) {
-            <div class="space-y-2 p-4">
-              @for (item of skeletons; track item) {
-                <div class="h-16 animate-pulse rounded-lg" style="background: var(--surface-muted);"></div>
-              }
-            </div>
-          } @else if (results().length === 0) {
-            <div class="p-8 text-center">
-              <p class="muted">{{ i18n.t('search.empty') }}</p>
-            </div>
-          } @else {
-            <div class="p-3">
-              @if (viewMode === 'list') {
-                <div class="grid gap-2 sm:grid-cols-2">
-                  @for (hit of results(); track hit.id) {
-                    <button
-                      type="button"
-                      class="result-card"
-                      [class.result-selected]="selected()?.id === hit.id"
-                      (click)="selectHit(hit)"
-                    >
-                      <span [class]="'doc-icon ' + iconClass(hit)">{{ fileExtension(hit) }}</span>
-                      <span class="min-w-0 flex-1">
-                        <span class="block truncate text-sm font-medium">{{ hit.title }}</span>
-                        <span class="mt-0.5 block truncate text-xs muted">
-                          {{ hit.author || hit.category || hit.originalFilename || '—' }}
-                        </span>
-                      </span>
-                    </button>
-                  }
-                </div>
-              } @else if (viewMode === 'grid') {
-                <div class="grid gap-3 sm:grid-cols-2">
-                  @for (hit of results(); track hit.id) {
-                    <button
-                      type="button"
-                      class="result-card result-card-grid"
-                      [class.result-selected]="selected()?.id === hit.id"
-                      (click)="selectHit(hit)"
-                    >
-                      <span [class]="'doc-icon doc-icon-lg ' + iconClass(hit)">{{ fileExtension(hit) }}</span>
-                      <span class="mt-2 block w-full truncate text-sm font-medium">{{ hit.title }}</span>
-                      <span class="mt-1 block w-full truncate text-xs muted">
-                        {{ hit.author || hit.category || '—' }}
-                      </span>
-                      <span class="mt-2 flex w-full items-center justify-between gap-2">
-                        <span class="text-xs muted">{{ typeLabel(hit) }}</span>
-                        @if (hit.status) {
-                          <span class="badge">{{ statusLabel(hit.status) }}</span>
-                        }
-                      </span>
-                    </button>
-                  }
-                </div>
-              } @else {
-                <div class="divide-y" style="border-color: var(--border);">
-                  @for (hit of results(); track hit.id) {
-                    <button
-                      type="button"
-                      class="result-row"
-                      [class.result-selected]="selected()?.id === hit.id"
-                      (click)="selectHit(hit)"
-                    >
-                      <span [class]="'doc-icon ' + iconClass(hit)">{{ fileExtension(hit) }}</span>
-                      <span class="min-w-0 flex-1">
-                        <span class="block truncate text-sm font-medium">{{ hit.title }}</span>
-                        <span class="mt-0.5 block truncate text-xs muted">
-                          {{ hit.author || '—' }} · {{ hit.category || '—' }} · v{{ hit.version || '—' }}
-                        </span>
-                      </span>
-                      <span class="text-xs muted">{{ formatDate(hit.createdAt) }}</span>
-                    </button>
-                  }
-                </div>
-              }
-            </div>
+          <app-search-results
+            [results]="results()"
+            [loading]="loading()"
+            [viewMode]="viewMode"
+            [selectedId]="selected()?.id ?? null"
+            (hitSelected)="selectHit($event)"
+          />
 
+          @if (!loading() && results().length > 0) {
             <div class="flex flex-wrap items-center justify-between gap-2 border-t p-3 text-xs muted" style="border-color: var(--border);">
               <span>
                 {{ i18n.t('search.showing') }} {{ showingStart() }}–{{ showingEnd() }}
@@ -309,9 +243,12 @@ type SortMode = 'relevance' | 'title' | 'date';
           <div class="rounded-xl p-5 surface lg:sticky lg:top-6">
             @if (selected(); as hit) {
               <div class="flex flex-col items-center text-center">
-                <span [class]="'doc-icon doc-icon-xl ' + iconClass(hit)">
-                  {{ fileExtension(hit) }}
-                </span>
+                <app-document-icon
+                  size="xl"
+                  [mime]="hit.mime"
+                  [title]="hit.title"
+                  [filename]="hit.originalFilename"
+                />
                 <h2 class="mt-4 break-words text-lg font-semibold">
                   {{ detail()?.title ?? hit.title }}
                 </h2>
@@ -432,7 +369,6 @@ export class SearchComponent implements OnInit {
   sortMode: SortMode = 'relevance';
   viewMode: ViewMode = 'list';
   readonly pageSize = 12;
-  readonly skeletons = [1, 2, 3, 4, 5];
 
   readonly results = signal<SearchHit[]>([]);
   readonly facets = signal<SearchFacets>(EMPTY_FACETS);
@@ -623,31 +559,10 @@ export class SearchComponent implements OnInit {
       : this.i18n.t('search.elements');
   }
 
-  fileExtension(hit: SearchHit): string {
-    const name = hit.originalFilename || hit.title;
-    const extension = name.split('.').pop();
-    if (extension && extension !== name) return extension.toUpperCase().slice(0, 4);
-
-    const mime = hit.mime ?? '';
-    if (mime.includes('pdf')) return 'PDF';
-    if (mime.includes('markdown')) return 'MD';
-    if (mime.includes('wordprocessingml')) return 'DOCX';
-    if (mime.includes('text/plain')) return 'TXT';
-    return 'DOC';
-  }
-
-  iconClass(hit: SearchHit): string {
-    const mime = hit.mime ?? '';
-    const extension = this.fileExtension(hit).toLowerCase();
-    if (mime.includes('pdf') || extension === 'pdf') return 'doc-icon-pdf';
-    if (mime.includes('markdown') || extension === 'md' || extension === 'markdown') return 'doc-icon-md';
-    if (mime.includes('wordprocessingml') || extension === 'docx') return 'doc-icon-docx';
-    return 'doc-icon-txt';
-  }
-
   typeLabel(hit: SearchHit): string {
     const mime = this.detail()?.mime ?? hit.mime ?? '';
-    const extension = this.fileExtension(hit).toLowerCase();
+    const name = hit.originalFilename || hit.title;
+    const extension = (name.split('.').pop() ?? '').toLowerCase();
     if (mime.includes('pdf') || extension === 'pdf') return 'PDF';
     if (mime.includes('markdown') || extension === 'md' || extension === 'markdown') return 'Markdown';
     if (mime.includes('wordprocessingml') || extension === 'docx') return 'Word';

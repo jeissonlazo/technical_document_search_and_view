@@ -84,7 +84,6 @@ export class AppComponent {
   readonly sse = inject(SseService);
 
   constructor() {
-    void this.auth.loadMe();
     effect(() => {
       if (this.auth.user()) {
         this.sse.connect();

@@ -8,7 +8,11 @@ import { ApiService, type DocumentDetail } from '../../core/api.service';
 import { apiErrorMessage } from '../../core/api-error';
 import { I18nService } from '../../core/i18n.service';
 import { DocxViewerComponent } from './docx-viewer.component';
-import { PdfViewerComponent, type PdfMatchInfo } from './pdf-viewer.component';
+import {
+  PdfViewerComponent,
+  type PdfMatchInfo,
+  type PdfMatchItem,
+} from './pdf-viewer.component';
 
 interface TocItem {
   id: string;
@@ -99,7 +103,7 @@ interface TocItem {
               <h2 class="text-xs font-semibold uppercase tracking-wide muted">
                 {{ i18n.t('viewer.contents') }}
               </h2>
-              <nav class="mt-3 max-h-[70vh] space-y-1 overflow-auto">
+              <nav class="mt-3 max-h-[40vh] space-y-1 overflow-auto">
                 @for (section of toc(); track section.id) {
                   <button
                     type="button"
@@ -114,6 +118,34 @@ interface TocItem {
                   <p class="text-xs muted">{{ i18n.t('viewer.fullDocument') }}</p>
                 }
               </nav>
+
+              @if (format(doc) === 'pdf' && query && pdfMatches().length) {
+                <div class="mt-4 border-t pt-3" style="border-color: var(--border);">
+                  <div class="flex items-center justify-between gap-2">
+                    <h3 class="text-xs font-semibold uppercase tracking-wide muted">
+                      {{ i18n.t('viewer.matchesList') }}
+                    </h3>
+                    <span class="text-xs muted">{{ pdfMatches().length }}</span>
+                  </div>
+                  <div class="mt-2 max-h-[40vh] space-y-1 overflow-auto">
+                    @for (match of pdfMatches(); track $index; let index = $index) {
+                      <button
+                        type="button"
+                        class="flex w-full items-start gap-2 rounded px-2 py-1.5 text-left text-xs"
+                        [style.background]="
+                          matchIndex() === index ? 'var(--surface-muted)' : 'transparent'
+                        "
+                        (click)="goToPdfMatch(index)"
+                      >
+                        <span class="badge flex-none">
+                          {{ i18n.t('viewer.page') }} {{ match.page }}
+                        </span>
+                        <span class="min-w-0">{{ match.excerpt }}</span>
+                      </button>
+                    }
+                  </div>
+                </div>
+              }
             </aside>
 
             <div class="min-w-0 rounded-xl p-4 surface">
@@ -123,6 +155,7 @@ interface TocItem {
                   [src]="doc.contentUrl"
                   [query]="query"
                   (matchesChange)="onPdfMatches($event)"
+                  (matchesListChange)="onPdfMatchList($event)"
                   (pageCountChange)="onPageCount($event)"
                 />
               } @else if (format(doc) === 'docx') {
@@ -247,6 +280,7 @@ export class ViewerComponent implements OnInit {
   readonly matchCount = signal(0);
   readonly matchIndex = signal(0);
   readonly pageCount = signal<number | null>(null);
+  readonly pdfMatches = signal<PdfMatchItem[]>([]);
 
   query = '';
 
@@ -292,6 +326,14 @@ export class ViewerComponent implements OnInit {
   onPdfMatches(info: PdfMatchInfo): void {
     this.matchCount.set(info.total);
     this.matchIndex.set(Math.max(0, info.current - 1));
+  }
+
+  onPdfMatchList(matches: PdfMatchItem[]): void {
+    this.pdfMatches.set(matches);
+  }
+
+  goToPdfMatch(index: number): void {
+    this.pdfViewer?.goToMatchIndex(index);
   }
 
   onPageCount(count: number): void {

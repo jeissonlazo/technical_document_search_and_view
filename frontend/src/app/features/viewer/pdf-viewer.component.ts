@@ -34,7 +34,7 @@ interface PdfDocumentLike {
   getPage: (page: number) => Promise<PdfPageLike>;
 }
 
-interface PdfMatchItem {
+export interface PdfMatchItem {
   page: number;
   excerpt: string;
 }
@@ -86,31 +86,6 @@ interface PdfMatchItem {
         <span class="text-xs muted">{{ (scale() * 100).toFixed(0) }}%</span>
         <button type="button" class="btn px-2 py-1" (click)="zoomIn()">+</button>
       </div>
-
-      @if (query && matches().length) {
-        <section class="overflow-hidden rounded-xl border" style="border-color: var(--border);">
-          <div class="flex items-center justify-between gap-2 px-3 py-2" style="background: var(--surface-muted);">
-            <h3 class="text-xs font-semibold uppercase tracking-wide muted">
-              {{ i18n.t('viewer.matchesList') }}
-            </h3>
-            <span class="text-xs muted">{{ matches().length }}</span>
-          </div>
-          <div class="max-h-56 overflow-auto">
-            @for (match of matches(); track $index; let index = $index) {
-              <button
-                type="button"
-                class="flex w-full items-start gap-2 border-t px-3 py-2 text-left text-sm"
-                style="border-color: var(--border);"
-                [style.background]="currentMatch() === index + 1 ? 'var(--surface-muted)' : 'transparent'"
-                (click)="goToMatchIndex(index)"
-              >
-                <span class="badge flex-none">{{ i18n.t('viewer.page') }} {{ match.page }}</span>
-                <span class="min-w-0">{{ match.excerpt }}</span>
-              </button>
-            }
-          </div>
-        </section>
-      }
     </div>
   `,
 })
@@ -120,6 +95,7 @@ export class PdfViewerComponent implements AfterViewInit, OnChanges {
   @Input({ required: true }) src!: string;
   @Input() query = '';
   @Output() readonly matchesChange = new EventEmitter<PdfMatchInfo>();
+  @Output() readonly matchesListChange = new EventEmitter<PdfMatchItem[]>();
   @Output() readonly pageCountChange = new EventEmitter<number>();
   @ViewChild('scrollContainer') private scrollContainer!: ElementRef<HTMLDivElement>;
   @ViewChildren('canvas') private canvasRefs!: QueryList<ElementRef<HTMLCanvasElement>>;
@@ -285,6 +261,7 @@ export class PdfViewerComponent implements AfterViewInit, OnChanges {
       this.currentMatch.set(matchItems.length ? 1 : 0);
     }
 
+    this.matchesListChange.emit(this.matches());
     this.emitMatches();
   }
 
