@@ -193,7 +193,7 @@ export function toMetadata(document: PrismaDocument): DocumentMetadata {
     category: document.category,
     version: document.version,
     tags: document.tags,
-    status: document.status,
+    status: document.status as DocumentMetadata['status'],
     mime: document.mime,
     size: document.size,
     checksum: document.checksum,

@@ -1,4 +1,4 @@
-import { Component, effect, inject, signal } from '@angular/core';
+import { Component, effect, inject, signal, untracked } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import type { DocumentStatus } from '@docs/shared';
 import { ApiService, type UploadMetadata } from '../../core/api.service';
@@ -174,17 +174,19 @@ export class UploadComponent {
       const event = this.sse.lastEvent();
       if (!event) return;
 
-      this.queue.update((items) =>
-        items.map((item) =>
-          item.documentId === event.documentId
-            ? {
-                ...item,
-                status: event.status,
-                error: event.status === 'ERROR' ? (event.message ?? item.error) : item.error,
-              }
-            : item,
-        ),
-      );
+      untracked(() => {
+        this.queue.update((items) =>
+          items.map((item) =>
+            item.documentId === event.documentId
+              ? {
+                  ...item,
+                  status: event.status,
+                  error: event.status === 'ERROR' ? (event.message ?? item.error) : item.error,
+                }
+              : item,
+          ),
+        );
+      });
     });
   }
 

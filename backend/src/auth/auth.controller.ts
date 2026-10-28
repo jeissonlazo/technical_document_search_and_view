@@ -6,6 +6,7 @@ import { CurrentAuth } from '../common/current-auth.decorator';
 import type { AuthContext } from '../common/auth.types';
 import { AuthGuard } from './auth.guard';
 import { AuthService } from './auth.service';
+import { CsrfGuard } from './csrf.guard';
 import { LoginDto, RegisterDto } from './dto';
 
 @Controller('auth')
@@ -32,7 +33,7 @@ export class AuthController {
   }
 
   @Post('logout')
-  @UseGuards(AuthGuard)
+  @UseGuards(AuthGuard, CsrfGuard)
   async logout(@CurrentAuth() auth: AuthContext, @Res({ passthrough: true }) res: Response) {
     if (auth.sid) await this.auth.destroySession(auth.sid);
     res.clearCookie(this.auth.getCookieName(), { path: '/' });

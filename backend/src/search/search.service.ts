@@ -56,7 +56,11 @@ export class SearchService implements OnModuleInit {
       index: this.index,
       mappings: {
         properties: {
-          title: { type: 'text', analyzer: 'spanish' },
+          title: {
+            type: 'text',
+            analyzer: 'spanish',
+            fields: { keyword: { type: 'keyword', ignore_above: 512 } },
+          },
           description: { type: 'text', analyzer: 'spanish' },
           content: { type: 'text', analyzer: 'spanish' },
           author: {
