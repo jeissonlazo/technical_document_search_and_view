@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { Client } from '@elastic/elasticsearch';
 import type { FacetBucket, SearchFacets, SearchHit, SearchResponse } from '@docs/shared';
 import { AppError } from '../common/app-error';
+import { PrismaService } from '../prisma/prisma.service';
 import { DOCUMENT_INDEX_PROPERTIES } from './document-index.mapping';
 
 export interface IndexableDocument {
@@ -34,7 +35,7 @@ export class SearchService implements OnModuleInit {
   private readonly index: string;
   private readonly indexVersion: string;
 
-  constructor(config: ConfigService) {
+  constructor(config: ConfigService, private readonly prisma: PrismaService) {
     this.index = config.getOrThrow<string>('elasticsearchIndex');
     this.indexVersion = config.get<string>('elasticsearchIndexVersion') ?? 'v1';
     const apiKey = config.get<string>('elasticsearchApiKey') ?? '';
@@ -201,6 +202,44 @@ export class SearchService implements OnModuleInit {
         ? response.hits.total
         : (response.hits.total?.value ?? 0);
 
+    let documents: Array<{
+      id: string;
+      mime: string;
+      size: number;
+      createdAt: Date;
+      originalFilename: string | null;
+      status: string;
+    }> = [];
+
+    try {
+      documents = await this.prisma.document.findMany({
+        where: { userId, id: { in: hits.map((hit) => hit.id) } },
+        select: {
+          id: true,
+          mime: true,
+          size: true,
+          createdAt: true,
+          originalFilename: true,
+          status: true,
+        },
+      });
+    } catch {
+      // La búsqueda sigue siendo útil aunque PostgreSQL no esté disponible.
+    }
+
+    const documentsById = new Map(documents.map((document) => [document.id, document]));
+    const enrichedHits = hits.map((hit) => {
+      const document = documentsById.get(hit.id);
+      return {
+        ...hit,
+        mime: document?.mime,
+        size: document?.size,
+        createdAt: document?.createdAt.toISOString() ?? null,
+        originalFilename: document?.originalFilename ?? null,
+        status: document?.status as SearchHit['status'],
+      } satisfies SearchHit;
+    });
+
     const aggregations = (response.aggregations ?? {}) as Record<
       string,
       { buckets?: Array<{ key: string; doc_count: number }> }
@@ -210,7 +249,7 @@ export class SearchService implements OnModuleInit {
       total,
       page,
       pageSize,
-      items: hits,
+      items: enrichedHits,
       facets: {
         categories: toBuckets(aggregations['categories']),
         tags: toBuckets(aggregations['tags']),

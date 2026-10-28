@@ -53,6 +53,11 @@ export interface SearchHit {
   category?: string | null;
   version?: string | null;
   tags: string[];
+  mime?: string;
+  size?: number;
+  createdAt?: string | null;
+  originalFilename?: string | null;
+  status?: DocumentStatus;
   highlight: {
     content?: string[];
     title?: string[];
