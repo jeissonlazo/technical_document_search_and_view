@@ -137,15 +137,17 @@ export class EditorComponent {
       // El siguiente documento necesita una clave distinta.
       if (!documentId) this.publishKey = crypto.randomUUID();
     } catch (error) {
-      // Se conserva el estado real del documento: el fallo no lo convierte
-      // en un documento con error de procesamiento.
-      this.status.set(previousStatus);
+      const status = httpStatus(error);
 
-      if (httpStatus(error) === 404 && documentId) {
+      if (status === 404 && documentId) {
         this.forgetDocument();
         this.error.set(this.i18n.t('editor.missingDocument'));
         return;
       }
+
+      // Si el backend responde que sigue procesando, el estado local estaba
+      // desactualizado: se refleja el estado real en lugar del anterior.
+      this.status.set(status === 409 ? 'PROCESSING' : previousStatus);
 
       this.error.set(
         apiErrorMessage(

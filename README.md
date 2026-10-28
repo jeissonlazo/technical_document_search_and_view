@@ -369,6 +369,7 @@ Medición actual: p50 servidor ~18 ms, p95 ~26 ms con 29 documentos INDEXED y un
 | `POST` | `/api/documents` | Subir un archivo + metadatos |
 | `POST` | `/api/documents/batch` | Subir varios archivos + metadatos alineados |
 | `GET` | `/api/documents/:id` | Metadatos, estado y texto normalizado |
+| `PUT` | `/api/documents/:id` | Reemplazar contenido y/o metadatos y reprocesar |
 | `GET` | `/api/documents/:id/content` | Original para el visor, con `Range` |
 | `POST` | `/api/documents/:id/retry` | Reintentar procesamiento |
 | `GET` | `/api/search?q=...` | Búsqueda paginada con highlights |
@@ -431,10 +432,22 @@ Límites: 20 archivos, 25 MB por archivo y 100 MB totales por defecto. Angular *
 La ruta `/editor` permite **redactar** un documento en lugar de subirlo ya escrito. TipTap edita el contenido y `@tiptap/markdown` lo serializa a Markdown; la pantalla muestra el editor en el área principal y la ficha del documento a un costado.
 
 - El panel lateral guarda título, autor, versión, categorías, etiquetas y descripción con los mismos límites que la carga.
-- `Publicar documento` envía el Markdown como archivo `.md` por `POST /api/documents`, con `Idempotency-Key`, así que el documento pasa por el mismo pipeline de extracción, indexación y búsqueda. No hay endpoint nuevo.
+- `Publicar documento` envía el Markdown como archivo `.md` por `POST /api/documents`, con `Idempotency-Key`, así que el documento pasa por el mismo pipeline de extracción, indexación y búsqueda.
+- Al publicar, el documento queda enlazado a la pantalla. Al seguir editando, el botón pasa a `Actualizar documento` y envía el contenido por `PUT /api/documents/:id`: **es el mismo documento**, se reprocesa y se reindexa, sin crear un duplicado.
+- El panel indica `Sin guardar` mientras haya cambios y deshabilita el guardado cuando no hay nada nuevo que procesar. Mientras el documento se está procesando el botón queda bloqueado para no encolar dos trabajos sobre el mismo contenido.
 - El nombre del archivo se deriva del título (`procedimiento-de-arranque.md`) y respeta las validaciones del backend.
 - `Descargar .md` guarda el archivo localmente y `Copiar Markdown` copia el texto; la vista `Markdown` muestra exactamente lo que se va a subir.
 - El estado mostrado es el real del documento (`PROCESSING`, `INDEXED`, `ERROR`) y se actualiza por SSE, igual que en la carga.
+
+### Actualizar un documento
+
+`PUT /api/documents/:id` acepta `multipart/form-data` con `file` (opcional) y los mismos campos de metadatos que la carga.
+
+- Reemplaza el contenido y/o los metadatos y deja el documento en `PROCESSING`; el worker vuelve a extraer el texto y reindexa el mismo `id` de Elasticsearch.
+- Si el contenido cambió (SHA-256 distinto), se invalida `normalized.txt` para que el worker reextraiga del original. Si solo cambian los metadatos, se reutiliza el texto normalizado y solo se reindexa.
+- Si ni el contenido ni los metadatos cambian, responde con el documento tal cual y no encola trabajo.
+- Devuelve `409 INVALID_STATE` si el documento sigue en `PROCESSING`: así dos trabajos no compiten por el mismo contenido.
+- Responde `202` con el documento actualizado; el estado final llega por SSE como en la carga.
 
 ## 10. Flujo de carga
 
@@ -485,7 +498,7 @@ El comando crea un índice nuevo, reindexa los documentos, recalcula el campo `m
 - El resumen de búsqueda no promete enlace profundo a la página del PDF; el resaltado obligatorio está en los fragmentos de resultados.
 - Si usas URLs firmadas directas de R2, falta configurar CORS y `Range` en el bucket.
 - El editor Markdown no guarda borradores automáticamente: recargar la página pierde el contenido no publicado. Tampoco admite listas de tareas (`- [ ]`), imágenes ni ecuaciones dentro del editor.
-- Cada `Publicar documento` crea un documento nuevo; no hay edición de la versión ya indexada.
+- La actualización reemplaza el contenido: no hay historial de versiones ni forma de recuperar el texto anterior desde la interfaz. El `PUT` tampoco reintenta solo; si el procesamiento falla, el documento queda en `ERROR` y se reintenta desde el visor.
 
 ## 14. Seguridad
 

@@ -39,6 +39,7 @@ El backend devuelve un código estable, etapa, mensaje seguro, indicador `retrya
 | `BATCH_TOO_LARGE` | Validación: el lote supera la cantidad de archivos o el tamaño total configurado | “No se pudo iniciar el lote: supera el límite de archivos o de tamaño total.” |
 | `EMPTY_FILE` | Validación: archivo sin contenido | “No se pudo procesar **{archivo}**: el archivo está vacío.” |
 | `INVALID_METADATA` | Validación: faltan campos o metadatos no válidos | “No se pudo procesar **{archivo}**: revisa los metadatos obligatorios e inténtalo de nuevo.” |
+| `INVALID_STATE` | Estado: se intenta una operación no permitida para el estado actual (actualizar o reintentar mientras el documento está en `PROCESSING`, o reintentar uno que no está en `ERROR`) | “El documento se está procesando. Espera a que termine para actualizarlo.” |
 | `DUPLICATE_FILE` | Validación: se detectó un documento duplicado según la política configurada | “No se pudo agregar **{archivo}**: ya existe un documento con el mismo contenido.” |
 | `UPLOAD_FAILED` | Recepción: transferencia interrumpida antes de aceptar el archivo | “No se pudo subir **{archivo}**: la transferencia falló. Puedes reintentar este archivo; el lote continuará.” |
 | `STORAGE_UNAVAILABLE` | Recepción/almacenamiento: no fue posible guardar durablemente el archivo en R2 | “No se pudo guardar **{archivo}** por un problema temporal del servicio. Intenta de nuevo más tarde.” |
@@ -83,6 +84,25 @@ Para una carga masiva, el frontend administra una cola con un máximo configurab
 La respuesta del backend confirma la recepción del archivo, devuelve un `trackingId` y el estado inicial `PROCESSING`. El documento permanece en `PROCESSING` mientras espera en cola o se extrae/indexa; estos trabajos siguen en segundo plano y pueden continuar mientras Angular sube el siguiente archivo. Por tanto, “terminó la subida” significa que el backend aceptó y confirmó ese archivo, no que terminó su indexación. Los estados terminales son `INDEXED` y `ERROR`.
 
 La carga y la indexación no forman parte de la latencia de una búsqueda. La interpretación propuesta del rango indicado por la prueba separa la latencia del backend del tiempo percibido en la interfaz; esta interpretación debe validarse con el evaluador porque el PDF no define percentiles ni condiciones de medida.
+
+## Actualización de un documento existente
+
+Editar un documento no debe crear una fila nueva. `PUT /api/documents/:id` reemplaza contenido y/o metadatos sobre el mismo registro y vuelve a ejecutar el procesamiento, de modo que el índice conserva un único documento por `id`.
+
+| Situación | Qué hace el backend | Estado resultante |
+| --- | --- | --- |
+| Contenido distinto (SHA-256 cambia) | Escribe el original nuevo en la misma clave, borra `normalized.txt`, actualiza tamaño/checksum/MIME, crea evento outbox | `PROCESSING` → `INDEXED` con texto reextraído |
+| Solo metadatos distintos | No toca el original; conserva `normalized.txt` para que el worker lo reutilice | `PROCESSING` → `INDEXED` con el nuevo título/autor/categorías |
+| Contenido y metadatos iguales | No escribe en R2 ni encola trabajo; devuelve el documento actual | Sin cambios |
+| Documento en `PROCESSING` | Rechaza con `409 INVALID_STATE` | Sin cambios |
+
+Reglas asociadas:
+
+- El texto normalizado se invalida **antes** de escribir el original: si el borrado falla, la operación se aborta sin tocar PostgreSQL. Si el original se escribe y la transacción falla, el siguiente procesamiento reextrae el contenido nuevo y un reintento del cliente converge.
+- La guarda de `PROCESSING` evita que dos trabajos compitan: el primero podría indexar el texto anterior y dejar el documento con contenido viejo.
+- `PUT` es idempotente por contenido: repetirlo sin cambios no reencola trabajo. No usa `Idempotency-Key` porque la clave natural es el propio `id` del documento.
+- El original admite cambio de extensión; la clave de R2 se recalcula y el objeto anterior se elimina después de confirmar la transacción.
+- `files` no es obligatorio: permite corregir metadatos sin reenviar el documento.
 
 ## Objetivos y medición de latencia de búsqueda
 
@@ -340,3 +360,5 @@ No se debe confirmar `PROCESSING` si el archivo o la tarea no quedaron guardados
 | 2026-10-28 | Limitar la v1 a TXT, PDF y Markdown; DOCX queda fuera de la aceptación | Adoptada | El enunciado original solo exige TXT, PDF y Markdown. El código DOCX existente se conserva como soporte opcional/experimental, sin impacto en la evaluación. |
 | 2026-10-28 | Usar Cloudflare R2 como almacenamiento principal de originales y texto normalizado, en bucket privado y con URLs firmadas | Adoptada | Separa binarios de PostgreSQL/Redis, permite acceso compartido entre API y workers y evita discos locales; MinIO queda solo para tests offline. |
 | 2026-10-28 | Añadir `POST /api/documents/batch` para clientes API, manteniendo la subida secuencial de Angular | Adoptada | El endpoint recibe archivos y metadatos alineados, crea documentos/jobs independientes y devuelve resultados parciales; Angular sigue usando una solicitud por archivo. |
+| 2026-10-28 | Adoptar Tiptap para **redactar** Markdown en el navegador (`/editor`), superando el descarte previo | Adoptada | Se integra a mano con `@tiptap/core` (no hace falta adaptador Angular) y `@tiptap/markdown` serializa a Markdown; el editor se limita a Markdown, no a importar DOCX, que era el motivo del descarte. |
+| 2026-10-28 | Actualizar con `PUT /api/documents/:id` sobre el mismo registro, en lugar de crear un documento nuevo | Adoptada | Evita duplicados al seguir editando: se reemplaza el original, se invalida `normalized.txt` solo si cambió el contenido y se reindexa el mismo `id`; se rechaza con `409` mientras el documento está en `PROCESSING`. |

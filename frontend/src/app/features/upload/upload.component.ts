@@ -11,6 +11,7 @@ import { UploadQueueComponent } from './components/upload-queue.component';
 import {
   MAX_FILES,
   MAX_FILE_SIZE_BYTES,
+  type FileMetadata,
   type QueueItem,
   type UploadAlert,
   type UploadAlertKind,
@@ -65,11 +66,13 @@ const ALERT_AUTO_DISMISS_MS = 6000;
 
         <app-upload-queue
           [queue]="queue()"
+          [sharedMetadata]="metadata"
           [loading]="loading()"
-          [canStart]="metadata.title.trim().length > 0"
+          [canStart]="canStart()"
           (clear)="clearQueue()"
           (retry)="retry($event)"
           (remove)="removeFile($event)"
+          (fileMetadataChange)="updateFileMetadata($event.index, $event.metadata)"
           (start)="start()"
         />
       </div>
@@ -170,7 +173,7 @@ export class UploadComponent implements OnDestroy {
   }
 
   async start(): Promise<void> {
-    if (this.loading() || !this.metadata.title.trim()) return;
+    if (this.loading() || !this.canStart()) return;
     this.loading.set(true);
     this.error.set('');
 
@@ -183,7 +186,7 @@ export class UploadComponent implements OnDestroy {
       try {
         const document = await this.api.uploadDocument(
           item.file,
-          this.metadata,
+          this.effectiveUploadMetadata(item),
           (progress) => {
             this.patch(index, { progress });
           },
@@ -271,7 +274,20 @@ export class UploadComponent implements OnDestroy {
         errors.push(`${file.name} supera los 25 MB.`);
         continue;
       }
-      items.push({ file, status: 'PENDING', progress: 0, idempotencyKey: crypto.randomUUID() });
+      items.push({
+        file,
+        status: 'PENDING',
+        progress: 0,
+        idempotencyKey: crypto.randomUUID(),
+        metadata: {
+          title: file.name.replace(/\.[^.]+$/, ''),
+          author: '',
+          categories: [],
+          version: '',
+          tags: '',
+          useShared: true,
+        },
+      });
     }
 
     const remaining = MAX_FILES - this.queue().length;
@@ -282,15 +298,41 @@ export class UploadComponent implements OnDestroy {
 
     if (items.length) {
       this.queue.update((current) => [...current, ...items]);
-      if (!this.metadata.title) {
-        this.metadata = {
-          ...this.metadata,
-          title: items[0].file.name.replace(/\.[^.]+$/, ''),
-        };
-      }
     }
 
     if (errors.length) this.error.set(errors.join(' '));
+  }
+
+  canStart(): boolean {
+    const pending = this.queue().filter((item) => item.status === 'PENDING');
+    return pending.length > 0 && pending.every((item) => this.isItemComplete(item));
+  }
+
+  updateFileMetadata(index: number, metadata: FileMetadata): void {
+    this.patch(index, { metadata });
+  }
+
+  private isItemComplete(item: QueueItem): boolean {
+    const author = item.metadata.useShared
+      ? (this.metadata.author ?? '')
+      : item.metadata.author;
+    return Boolean(item.metadata.title.trim() && author.trim());
+  }
+
+  private effectiveUploadMetadata(item: QueueItem): UploadMetadata {
+    const file = item.metadata;
+    const shared = this.metadata;
+    const categories = file.useShared ? (shared.categories ?? []) : file.categories;
+
+    return {
+      title: file.title.trim(),
+      description: shared.description,
+      author: (file.useShared ? shared.author : file.author)?.trim() || '',
+      category: categories[0] ?? '',
+      categories,
+      version: (file.useShared ? shared.version : file.version)?.trim() || '',
+      tags: (file.useShared ? shared.tags : file.tags)?.trim() || '',
+    };
   }
 
   private patch(index: number, patch: Partial<QueueItem>): void {

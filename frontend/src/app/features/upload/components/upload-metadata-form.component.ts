@@ -38,22 +38,15 @@ import { CategoryComboboxComponent } from '../../../shared/document/category-com
             {{ i18n.t('upload.metadataHint') }}
           </p>
         </div>
-        <span hlmBadge variant="outline">{{ i18n.t('upload.required') }}</span>
+        <span hlmBadge variant="outline">{{ i18n.t('upload.sharedMetadata') }}</span>
       </div>
 
       <div hlmCardContent>
-        <div class="grid gap-4 md:grid-cols-2">
-          <label class="block text-sm font-medium md:col-span-2">
-            {{ i18n.t('upload.titleField') }} *
-            <input
-              hlmInput
-              class="mt-1 w-full"
-              name="title"
-              [(ngModel)]="metadata.title"
-              required
-            />
-          </label>
+        <p class="mb-4 rounded-lg border p-3 text-xs" style="border-color: var(--border); color: var(--muted);">
+          {{ i18n.t('upload.titlePerFileHint') }}
+        </p>
 
+        <div class="grid gap-4 md:grid-cols-2">
           <label class="block text-sm font-medium">
             {{ i18n.t('upload.author') }}
             <input hlmInput class="mt-1 w-full" name="author" [(ngModel)]="metadata.author" />

@@ -38,6 +38,7 @@ const DEFAULT_CATEGORIES = [
         [search]="search()"
         (searchChange)="search.set($event)"
         [closeOnSelect]="false"
+        [disabled]="disabled()"
       >
         <hlm-combobox-chips class="w-full">
           <ng-template hlmComboboxValues let-values>
@@ -84,6 +85,7 @@ export class CategoryComboboxComponent {
   readonly available = input<string[]>(DEFAULT_CATEGORIES);
   /** Identificador del input; debe ser único por pantalla. */
   readonly controlId = input('category-combobox');
+  readonly disabled = input(false);
   readonly search = signal('');
 
   readonly options = computed(() => {
