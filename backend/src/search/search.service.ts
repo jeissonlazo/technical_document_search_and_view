@@ -151,6 +151,24 @@ export class SearchService implements OnModuleInit {
           ? [{ createdAt: { order: 'desc' } }]
           : ['_score', { createdAt: 'desc' }];
 
+    const phrase = extractQuotedPhrase(params.q);
+    const textQuery = phrase
+      ? {
+          multi_match: {
+            query: phrase,
+            type: 'phrase',
+            slop: 0,
+            fields: ['title^3', 'description^2', 'content', 'metadata^2'],
+          },
+        }
+      : {
+          multi_match: {
+            query: params.q,
+            fields: ['title^3', 'description^2', 'content', 'metadata^2'],
+            fuzziness: 'AUTO',
+          },
+        };
+
     const elasticsearchStartedAt = performance.now();
     const response = await this.client.search({
       index: this.index,
@@ -159,17 +177,7 @@ export class SearchService implements OnModuleInit {
       track_total_hits: true,
       query: {
         bool: {
-          must: params.q
-            ? [
-                {
-                  multi_match: {
-                    query: params.q,
-                    fields: ['title^3', 'description^2', 'content', 'metadata^2'],
-                    fuzziness: 'AUTO',
-                  },
-                },
-              ]
-            : [{ match_all: {} }],
+          must: params.q ? [textQuery] : [{ match_all: {} }],
           filter: filters,
         },
       },
@@ -277,4 +285,13 @@ function toIndexingError(error: unknown): AppError {
     503,
     true,
   );
+}
+
+/**
+ * Reconoce una frase entre comillas para usar `match_phrase`.
+ * Si no hay comillas, se mantiene la búsqueda por términos con fuzziness.
+ */
+function extractQuotedPhrase(query: string): string | null {
+  const match = query.trim().match(/"([^"]+)"|“([^”]+)”/);
+  return (match?.[1] ?? match?.[2] ?? '').trim() || null;
 }

@@ -121,6 +121,7 @@ export class PdfViewerComponent implements AfterViewInit, OnChanges {
       this.pdf = (await task.promise) as unknown as PdfDocumentLike;
       this.pages.set(this.pdf?.numPages ?? 1);
       this.pageCountChange.emit(this.pages());
+      await this.fitInitialScale();
       await this.countMatches();
       await this.renderAllPages();
     } catch (error) {
@@ -218,6 +219,19 @@ export class PdfViewerComponent implements AfterViewInit, OnChanges {
 
   pageNumbers(): number[] {
     return Array.from({ length: this.pages() }, (_, index) => index + 1);
+  }
+
+  private async fitInitialScale(): Promise<void> {
+    if (!this.pdf) return;
+
+    const containerWidth = this.scrollContainer?.nativeElement?.clientWidth ?? 0;
+    if (!containerWidth) return;
+
+    const firstPage = await this.pdf.getPage(1);
+    const baseWidth = firstPage.getViewport({ scale: 1 }).width;
+    const availableWidth = Math.max(240, containerWidth - 32);
+    const fitScale = Math.min(1.2, Math.max(0.55, availableWidth / baseWidth));
+    this.scale.set(Number(fitScale.toFixed(2)));
   }
 
   private async refreshMatches(): Promise<void> {

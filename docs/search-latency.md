@@ -90,6 +90,20 @@ El detalle del preview sigue consultando PostgreSQL solo cuando el usuario selec
 
 La meta de menos de un segundo se cumple con un margen amplio en este entorno. El máximo aislado de ~930 ms corresponde a una entrada fría del usuario en la caché de autenticación; el p95 se mantiene en ~41 ms.
 
+### Medición de cierre con el corpus actual
+
+Fecha: 2026-10-28. Corpus activo: **29 documentos INDEXED**, 3 documentos ERROR, índice `documents` con **1,6 MB** de almacenamiento. Se usaron 6 consultas × 5 repeticiones (30 muestras), con las mismas consultas representativas.
+
+| Métrica | p50 | p95 |
+|---|---:|---:|
+| Cliente completo | 23,96 ms | 31,75 ms |
+| Autenticación | 0,44 ms | 0,76 ms |
+| Elasticsearch | 12,89 ms | 23,90 ms |
+| PostgreSQL (metadatos) | — | — |
+| Total servidor | 18,08 ms | 25,51 ms |
+
+El máximo aislado fue 533 ms por una entrada fría en la caché de autenticación. Resultado completo: [search-latency-current.json](search-latency-current.json).
+
 ## 5. Funciones preservadas
 
 - Filtros por categoría, autor y etiquetas.
@@ -102,10 +116,10 @@ La meta de menos de un segundo se cumple con un margen amplio en este entorno. E
 
 ## 6. Límites de la medición
 
-- El dataset local es pequeño; los percentiles no representan un corpus de producción.
-- La segunda medición usó 48 muestras, las mismas consultas y repeticiones que la inicial.
+- El dataset local tiene 29 documentos INDEXED y 1,6 MB; los percentiles no representan un corpus de producción.
+- La segunda medición usó 48 muestras, las mismas consultas y repeticiones que la inicial; la medición de cierre usó 30 muestras sobre el corpus actual.
 - El benchmark usa la cuenta semilla y consultas representativas, no una mezcla completa de filtros y páginas.
-- No se implementó caché de resultados: con ~12 ms p50 no aporta valor y añadiría invalidación compleja.
+- No se implementó caché de resultados: con ~18 ms p50 no aporta valor y añadiría invalidación compleja.
 
 ## 7. Próximos pasos si cambia el volumen
 

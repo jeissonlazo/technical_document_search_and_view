@@ -24,6 +24,9 @@ Aplicación web para cargar documentos técnicos (PDF, TXT y Markdown), procesar
 - [Requerimientos de frontend](docs/requerimientos-frontend.md)
 - [Revisión del stack de visualización](docs/revision-visualizacion.md)
 - [Convención UI y Spartan NG](docs/ui-conventions.md)
+- [Validación sección 4](docs/validacion-seccion4.md)
+- [Validación sección 5](docs/validacion-seccion5.md)
+- [Verificación final](docs/validacion-final.md)
 - [Uso de IA](docs/ia.md)
 
 ## Estructura
@@ -331,7 +334,7 @@ pnpm build
 pnpm test
 ```
 
-Incluye pruebas unitarias del extractor (TXT, Markdown, BOM, formatos no admitidos, archivo vacío, límite de caracteres), del worker (idempotencia, retry transitorio, timeout, error terminal y camino exitoso) y del nombre de archivo. Incluye además un smoke test de integración del pipeline completo:
+Incluye pruebas unitarias del extractor (TXT, Markdown, BOM, formatos no admitidos, archivo vacío, límite de caracteres), del worker (idempotencia, retry transitorio, timeout, error terminal y camino exitoso), del servicio de documentos (validaciones, creación y lote), de búsqueda (filtros, paginación, highlight y frase exacta) y del nombre de archivo. Son **28 pruebas en 5 suites**. Incluye además un smoke test de integración del pipeline completo:
 
 ```bash
 pnpm --filter @docs/backend e2e:pipeline
@@ -349,7 +352,7 @@ pnpm --filter @docs/backend benchmark:search
 
 Resultado y metodología: [docs/search-latency.md](docs/search-latency.md).
 
-Medición actual: p50 servidor ~16 ms, p95 ~41 ms con el dataset local. La lectura de metadatos se movió al índice de Elasticsearch y el usuario autenticado se cachea brevemente en Redis.
+Medición actual: p50 servidor ~18 ms, p95 ~26 ms con 29 documentos INDEXED y un índice de 1,6 MB. La lectura de metadatos se movió al índice de Elasticsearch y el usuario autenticado se cachea brevemente en Redis.
 
 ## 9. API principal
 

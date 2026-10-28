@@ -69,6 +69,7 @@ export class UploadComponent {
   readonly error = signal('');
   readonly dragActive = signal(false);
   readonly maxFiles = MAX_FILES;
+  private sseWasConnected = false;
 
   metadata: UploadMetadata = {
     title: '',
@@ -81,7 +82,21 @@ export class UploadComponent {
 
   constructor() {
     effect(() => {
+      const connected = this.sse.connected();
       const event = this.sse.lastEvent();
+
+      if (!connected) {
+        this.sseWasConnected = false;
+        return;
+      }
+
+      if (!this.sseWasConnected) {
+        this.sseWasConnected = true;
+        // EventSource reconecta, pero no reproduce eventos perdidos. Una sola
+        // consulta de los documentos activos evita depender de polling.
+        untracked(() => void this.reconcileActiveDocuments());
+      }
+
       if (!event) return;
 
       untracked(() => {
@@ -98,6 +113,24 @@ export class UploadComponent {
         );
       });
     });
+  }
+
+  private async reconcileActiveDocuments(): Promise<void> {
+    const items = this.queue();
+    for (let index = 0; index < items.length; index += 1) {
+      const item = items[index];
+      if (!item.documentId || item.status === 'INDEXED' || item.status === 'ERROR') continue;
+
+      try {
+        const document = await this.api.getDocument(item.documentId);
+        this.patch(index, {
+          status: document.status,
+          error: document.status === 'ERROR' ? (document.errorMessage ?? item.error) : undefined,
+        });
+      } catch {
+        // Se conserva el último estado conocido.
+      }
+    }
   }
 
   onFilesSelected(event: Event): void {
