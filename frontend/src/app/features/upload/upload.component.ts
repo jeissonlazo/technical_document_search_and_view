@@ -1,19 +1,34 @@
 import { Component, effect, inject, signal, untracked } from '@angular/core';
+import type { DocumentStatus } from '@docs/shared';
 import { ApiService, type UploadMetadata } from '../../core/api.service';
 import { apiErrorMessage } from '../../core/api-error';
 import { I18nService } from '../../core/i18n.service';
 import { SseService } from '../../core/sse.service';
+import { UploadAlertStackComponent } from './components/upload-alert-stack.component';
 import { UploadDropzoneComponent } from './components/upload-dropzone.component';
 import { UploadMetadataFormComponent } from './components/upload-metadata-form.component';
 import { UploadQueueComponent } from './components/upload-queue.component';
-import { MAX_FILES, MAX_FILE_SIZE_BYTES, type QueueItem } from './upload.models';
+import {
+  MAX_FILES,
+  MAX_FILE_SIZE_BYTES,
+  type QueueItem,
+  type UploadAlert,
+  type UploadAlertKind,
+} from './upload.models';
 
 @Component({
   selector: 'app-upload',
   standalone: true,
-  imports: [UploadDropzoneComponent, UploadMetadataFormComponent, UploadQueueComponent],
+  imports: [
+    UploadAlertStackComponent,
+    UploadDropzoneComponent,
+    UploadMetadataFormComponent,
+    UploadQueueComponent,
+  ],
   template: `
     <section class="space-y-5">
+      <app-upload-alert-stack [alerts]="alerts()" (dismiss)="dismissAlert($event)" />
+
       <div>
         <h1 class="text-2xl font-bold">{{ i18n.t('upload.title') }}</h1>
         <p class="mt-1 text-sm muted">{{ i18n.t('upload.subtitle') }}</p>
@@ -65,11 +80,13 @@ export class UploadComponent {
   readonly i18n = inject(I18nService);
 
   readonly queue = signal<QueueItem[]>([]);
+  readonly alerts = signal<UploadAlert[]>([]);
   readonly loading = signal(false);
   readonly error = signal('');
   readonly dragActive = signal(false);
   readonly maxFiles = MAX_FILES;
   private sseWasConnected = false;
+  private alertSequence = 0;
 
   metadata: UploadMetadata = {
     title: '',
@@ -101,6 +118,11 @@ export class UploadComponent {
       if (!event) return;
 
       untracked(() => {
+        const current = this.queue().find((item) => item.documentId === event.documentId);
+        if (current && current.status !== event.status) {
+          this.notifyStatus(event.status, current.file.name, event.message, event.stage);
+        }
+
         this.queue.update((items) =>
           items.map((item) =>
             item.documentId === event.documentId
@@ -124,10 +146,14 @@ export class UploadComponent {
 
       try {
         const document = await this.api.getDocument(item.documentId);
+        const previousStatus = item.status;
         this.patch(index, {
           status: document.status,
           error: document.status === 'ERROR' ? (document.errorMessage ?? item.error) : undefined,
         });
+        if (previousStatus !== document.status) {
+          this.notifyStatus(document.status, item.file.name, document.errorMessage);
+        }
       } catch {
         // Se conserva el último estado conocido.
       }
@@ -165,12 +191,23 @@ export class UploadComponent {
           documentId: document.id,
           progress: 100,
         });
+        this.pushAlert(
+          'uploaded',
+          this.i18n.t('upload.alertUploadedTitle'),
+          `${item.file.name} · ${this.i18n.t('upload.alertUploadedMessage')}`,
+        );
       } catch (error) {
+        const message = apiErrorMessage(error, 'No se pudo subir el archivo.');
         this.patch(index, {
           status: 'ERROR',
           progress: 0,
-          error: apiErrorMessage(error, 'No se pudo subir el archivo.'),
+          error: message,
         });
+        this.pushAlert(
+          'error',
+          this.i18n.t('upload.alertErrorTitle'),
+          `${item.file.name} · ${message}`,
+        );
       }
     }
 
@@ -189,8 +226,19 @@ export class UploadComponent {
     try {
       const document = await this.api.retryDocument(item.documentId);
       this.patch(index, { status: document.status, error: undefined });
+      this.pushAlert(
+        'retry',
+        this.i18n.t('upload.alertRetryTitle'),
+        `${item.file.name} · ${this.i18n.t('upload.alertRetryMessage')}`,
+      );
     } catch (error) {
-      this.patch(index, { error: apiErrorMessage(error, 'No se pudo reintentar.') });
+      const message = apiErrorMessage(error, 'No se pudo reintentar.');
+      this.patch(index, { error: message });
+      this.pushAlert(
+        'error',
+        this.i18n.t('upload.alertErrorTitle'),
+        `${item.file.name} · ${message}`,
+      );
     }
   }
 
@@ -245,6 +293,48 @@ export class UploadComponent {
   private patch(index: number, patch: Partial<QueueItem>): void {
     this.queue.update((items) =>
       items.map((item, current) => (current === index ? { ...item, ...patch } : item)),
+    );
+  }
+
+  dismissAlert(id: number): void {
+    this.alerts.update((alerts) => alerts.filter((alert) => alert.id !== id));
+  }
+
+  private notifyStatus(
+    status: DocumentStatus,
+    filename: string,
+    message?: string | null,
+    stage?: string,
+  ): void {
+    let kind: UploadAlertKind;
+    let title: string;
+    let description: string;
+
+    if (status === 'INDEXED') {
+      kind = 'indexed';
+      title = this.i18n.t('upload.alertIndexedTitle');
+      description = this.i18n.t('upload.alertIndexedMessage');
+    } else if (status === 'ERROR') {
+      kind = 'error';
+      title = this.i18n.t('upload.alertErrorTitle');
+      description = message || this.i18n.t('upload.alertErrorMessage');
+    } else if (stage === 'retry') {
+      kind = 'retry';
+      title = this.i18n.t('upload.alertRetryTitle');
+      description = this.i18n.t('upload.alertRetryMessage');
+    } else {
+      kind = 'processing';
+      title = this.i18n.t('upload.alertProcessingTitle');
+      description = this.i18n.t('upload.alertProcessingMessage');
+    }
+
+    this.pushAlert(kind, title, `${filename} · ${description}`);
+  }
+
+  private pushAlert(kind: UploadAlertKind, title: string, message: string): void {
+    this.alertSequence += 1;
+    this.alerts.update((alerts) =>
+      [{ id: this.alertSequence, kind, title, message }, ...alerts].slice(0, 5),
     );
   }
 }

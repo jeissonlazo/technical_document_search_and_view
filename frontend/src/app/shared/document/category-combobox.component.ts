@@ -24,6 +24,9 @@ const DEFAULT_CATEGORIES = [
   standalone: true,
   imports: [HlmComboboxImports],
   changeDetection: ChangeDetectionStrategy.OnPush,
+  // Un elemento de componente es inline por defecto; en un formulario apilado
+  // eso anula el espaciado vertical entre campos.
+  host: { class: 'block' },
   template: `
     <div class="flex flex-col gap-2">
       <label class="text-sm font-medium" [for]="controlId()">
@@ -96,7 +99,7 @@ export class CategoryComboboxComponent {
     return this.options().some((option) => option.toLowerCase() === value.toLowerCase()) ? null : value;
   });
 
-  addFromInput(event: KeyboardEvent): void {
+  addFromInput(event: Event): void {
     const value = this.search().trim();
     if (!value) return;
 

@@ -48,6 +48,9 @@
       ],
       "@spartan-ng/helm/input-group": [
         "./src/app/shared/ui/input-group/src/index.ts"
+      ],
+      "@spartan-ng/helm/alert": [
+        "./src/app/shared/ui/alert/src/index.ts"
       ]
     }
   },

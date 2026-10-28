@@ -25,6 +25,7 @@ frontend/src/app/shared/ui/
   card/src/lib/hlm-card.ts
   badge/src/lib/hlm-badge.ts
   combobox/src/lib/hlm-combobox.ts
+  alert/src/lib/hlm-alert.ts
   table/src/lib/hlm-table.ts
   progress/src/lib/hlm-progress.ts
   utils/src/lib/hlm.ts
@@ -89,8 +90,9 @@ El generador actualiza `components.json` y los paths de `tsconfig.json`. Revisar
 
 - **Login:** `HlmButton` y `HlmInput`.
 - **Búsqueda:** resultados extraídos a `app-search-results` y `app-document-icon`; los controles propios siguen pendientes.
-- **Carga:** dividida en `app-upload-dropzone`, `app-upload-metadata-form` y `app-upload-queue`; usa `HlmCard`, `HlmBadge`, `HlmInput`, `HlmTextarea`, `HlmButton`, `HlmProgress` y `app-category-combobox` (Combobox múltiple con chips; las categorías se persisten como `string[]`).
+- **Carga:** dividida en `app-upload-dropzone`, `app-upload-metadata-form` y `app-upload-queue`; usa `HlmCard`, `HlmBadge`, `HlmInput`, `HlmTextarea`, `HlmButton`, `HlmProgress`, `HlmAlert` (`app-upload-alert-stack`) y `app-category-combobox` (Combobox múltiple con chips; `Enter` agrega la categoría escrita; las categorías se persisten como `string[]`).
 - **Visor:** dividido en `app-viewer-header`, `app-viewer-outline` y `app-viewer-metadata`; usa `HlmCard`, `HlmBadge` y `HlmButton`. Los renderers PDF/DOCX permanecen especializados.
+- **Editor:** dividido en `app-markdown-editor`, `app-editor-toolbar` y `app-editor-metadata-panel`; usa `HlmCard`, `HlmBadge`, `HlmButton`, `HlmInput`, `HlmTextarea` y `app-category-combobox`. La barra de formato no conoce TipTap: recibe el estado activo y emite `EditorCommand`.
 - **Ajustes:** dividido en `app-api-key-form` y `app-api-key-table`; usa `HlmCard`, `HlmInput`, `HlmButton` y `HlmTable`.
 
 ## Fragmentación por feature
@@ -100,7 +102,14 @@ features/upload/components/
   upload-dropzone.component.ts
   upload-metadata-form.component.ts
   upload-queue.component.ts
-  category-combobox.component.ts
+  upload-alert-stack.component.ts
+
+features/editor/
+  editor.component.ts
+  editor.models.ts
+  components/markdown-editor.component.ts
+  components/editor-toolbar.component.ts
+  components/editor-metadata-panel.component.ts
 
 features/viewer/
   viewer-header.component.ts
@@ -111,9 +120,23 @@ features/viewer/
 features/settings/components/
   api-key-form.component.ts
   api-key-table.component.ts
+
+shared/document/
+  category-combobox.component.ts
+  document-icon.component.ts
+  document-status-badge.component.ts
 ```
 
-La pantalla conserva el estado y las llamadas al API; los componentes hijos reciben datos y emiten eventos. No se comparten servicios de feature desde los hijos.
+La pantalla conserva el estado y las llamadas al API; los componentes hijos reciben datos y emiten eventos. No se comparten servicios de feature desde los hijos. `app-category-combobox` vive en `shared/document` porque la usan la carga y el editor.
+
+## Editor Markdown (TipTap)
+
+- TipTap se integra a mano: `MarkdownEditorComponent` crea la instancia en `afterNextRender` y la destruye con `DestroyRef`. No hay adaptador oficial de Angular.
+- El Markdown es la única fuente de verdad: `editor.getMarkdown()` alimenta un `model` y ese valor es lo que se sube y lo que muestra la vista `Markdown`.
+- `setContent` **siempre** se llama con `{ contentType: 'markdown' }`. Sin esa opción TipTap interpreta el texto como HTML y pierde los saltos de bloque.
+- El contenido inicial se pasa con `content` + `contentType: 'markdown'` en las opciones del editor.
+- Extensiones: `StarterKit` (incluye Link, Underline y UndoRedo), `Placeholder`, `TableKit` y `Markdown`.
+- La tipografía del área editable reutiliza `.markdown-body` y suma `.tiptap-prose` para el placeholder y las tablas (`frontend/src/styles.css`).
 
 ## Orden de migración
 

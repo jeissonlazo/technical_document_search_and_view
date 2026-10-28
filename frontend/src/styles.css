@@ -525,6 +525,15 @@ mark.search-hit.search-hit-current {
   overflow-x: auto;
 }
 
+/* TipTap envuelve el contenido de cada ítem en un párrafo. */
+.tiptap-prose li > p {
+  margin: 0;
+}
+
+.tiptap-prose li {
+  margin: 0.3em 0;
+}
+
 .tiptap-prose th,
 .tiptap-prose td {
   position: relative;

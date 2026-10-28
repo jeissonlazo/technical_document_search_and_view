@@ -9,6 +9,7 @@ Aplicación web para cargar documentos técnicos (PDF, TXT y Markdown), procesar
 | Capa | Tecnología |
 | --- | --- |
 | Frontend | Angular 22 + TypeScript + Spartan NG + Tailwind CSS 4 |
+| Editor | TipTap 3 + `@tiptap/markdown` |
 | Backend | NestJS + TypeScript |
 | Persistencia | PostgreSQL en **Neon** + Prisma |
 | Búsqueda | Elasticsearch 8 |
@@ -425,6 +426,16 @@ Límites: 20 archivos, 25 MB por archivo y 100 MB totales por defecto. Angular *
 - Nombre de archivo: sin rutas, caracteres de control, nombres reservados de Windows ni longitud excesiva. El nombre saneado se guarda como `originalFilename`; la clave de R2 usa UUID y extensión.
 - Los errores devuelven `code`, `message`, `retryable` y `supportRef`; en batch, cada archivo tiene su propio resultado.
 
+### Editor de documentos Markdown
+
+La ruta `/editor` permite **redactar** un documento en lugar de subirlo ya escrito. TipTap edita el contenido y `@tiptap/markdown` lo serializa a Markdown; la pantalla muestra el editor en el área principal y la ficha del documento a un costado.
+
+- El panel lateral guarda título, autor, versión, categorías, etiquetas y descripción con los mismos límites que la carga.
+- `Publicar documento` envía el Markdown como archivo `.md` por `POST /api/documents`, con `Idempotency-Key`, así que el documento pasa por el mismo pipeline de extracción, indexación y búsqueda. No hay endpoint nuevo.
+- El nombre del archivo se deriva del título (`procedimiento-de-arranque.md`) y respeta las validaciones del backend.
+- `Descargar .md` guarda el archivo localmente y `Copiar Markdown` copia el texto; la vista `Markdown` muestra exactamente lo que se va a subir.
+- El estado mostrado es el real del documento (`PROCESSING`, `INDEXED`, `ERROR`) y se actualiza por SSE, igual que en la carga.
+
 ## 10. Flujo de carga
 
 1. Angular envía un archivo a la vez por lote con `multipart/form-data` e `Idempotency-Key`.
@@ -473,6 +484,8 @@ El comando crea un índice nuevo, reindexa los documentos, recalcula el campo `m
 - La autenticación es mínima: cookie HttpOnly, CSRF y API keys; sin roles ni permisos diferenciados.
 - El resumen de búsqueda no promete enlace profundo a la página del PDF; el resaltado obligatorio está en los fragmentos de resultados.
 - Si usas URLs firmadas directas de R2, falta configurar CORS y `Range` en el bucket.
+- El editor Markdown no guarda borradores automáticamente: recargar la página pierde el contenido no publicado. Tampoco admite listas de tareas (`- [ ]`), imágenes ni ecuaciones dentro del editor.
+- Cada `Publicar documento` crea un documento nuevo; no hay edición de la versión ya indexada.
 
 ## 14. Seguridad
 
