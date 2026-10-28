@@ -1,0 +1,46 @@
+{
+  "generatedAt": "2026-10-28T14:53:15.970Z",
+  "base": "http://localhost:4200",
+  "queries": [
+    "arquitectura",
+    "manual",
+    "redes",
+    "pdf",
+    "datos",
+    "markdown"
+  ],
+  "runsPerQuery": 8,
+  "samples": 48,
+  "summary": {
+    "clientMs": {
+      "p50": 31.000449999999773,
+      "p95": 60.08731499999975,
+      "min": 7.419800000003306,
+      "max": 947.7317999999941
+    },
+    "authMs": {
+      "p50": 0.5,
+      "p95": 0.9439999999999997,
+      "min": 0.36,
+      "max": 925.23
+    },
+    "elasticsearchMs": {
+      "p50": 10.605,
+      "p95": 27.980999999999987,
+      "min": 2.79,
+      "max": 43.63
+    },
+    "postgresMs": {
+      "p50": null,
+      "p95": null,
+      "min": null,
+      "max": null
+    },
+    "serverTotalMs": {
+      "p50": 16.265,
+      "p95": 41.303499999999985,
+      "min": 3.3,
+      "max": 929.53
+    }
+  }
+}

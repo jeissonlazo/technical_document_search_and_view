@@ -70,7 +70,7 @@ import { ThemeService } from './core/theme.service';
         </div>
       </header>
 
-      <main class="mx-auto max-w-6xl px-4 py-6">
+      <main class="mx-auto max-w-7xl px-4 py-6">
         <router-outlet />
       </main>
     </div>

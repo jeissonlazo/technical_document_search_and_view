@@ -66,6 +66,7 @@ cp .env.example .env
 | `ELASTICSEARCH_API_KEY` | No | Solo si el clúster usa API key |
 | `SESSION_SECRET` | Sí | Secreto de sesión/CSRF; mínimo 16 caracteres, recomendado 48 bytes |
 | `SESSION_TTL_SECONDS` | No | TTL de sesión; por defecto `604800` |
+| `AUTH_USER_CACHE_TTL_SECONDS` | No | Caché Redis del usuario autenticado; por defecto `30` |
 | `R2_ACCOUNT_ID` | Sí | Account ID de Cloudflare |
 | `R2_ACCESS_KEY_ID` | Sí | Access Key ID de R2 o `id` del token de API |
 | `R2_SECRET_ACCESS_KEY` | Sí | Secret Access Key de R2 o SHA-256 del token de API |
@@ -335,7 +336,19 @@ Incluye pruebas unitarias del extractor (TXT, Markdown, BOM, formatos no admitid
 pnpm --filter @docs/backend e2e:pipeline
 ```
 
-Ese test inicia sesión, sube un TXT con `Idempotency-Key`, verifica que la respuesta sea `202 PROCESSING`, comprueba la idempotencia, espera `INDEXED` y busca el documento. Las pruebas e2e de navegador, la búsqueda dentro de PDF y el benchmark de latencia quedan pendientes.
+Ese test inicia sesión, sube un TXT con `Idempotency-Key`, verifica que la respuesta sea `202 PROCESSING`, comprueba la idempotencia, espera `INDEXED` y busca el documento. Las pruebas e2e de navegador y la búsqueda dentro de PDF quedan pendientes.
+
+### Latencia de búsqueda
+
+El endpoint devuelve `Server-Timing` con `auth`, `elasticsearch`, `postgres` cuando aplica, y `total`. Para reproducir la medición:
+
+```bash
+pnpm --filter @docs/backend benchmark:search
+```
+
+Resultado y metodología: [docs/search-latency.md](docs/search-latency.md).
+
+Medición actual: p50 servidor ~16 ms, p95 ~41 ms con el dataset local. La lectura de metadatos se movió al índice de Elasticsearch y el usuario autenticado se cachea brevemente en Redis.
 
 ## 9. API principal
 

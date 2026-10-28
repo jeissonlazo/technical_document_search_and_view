@@ -3,8 +3,8 @@ import { ConfigService } from '@nestjs/config';
 import { Client } from '@elastic/elasticsearch';
 import type { FacetBucket, SearchFacets, SearchHit, SearchResponse } from '@docs/shared';
 import { AppError } from '../common/app-error';
-import { PrismaService } from '../prisma/prisma.service';
 import { DOCUMENT_INDEX_PROPERTIES } from './document-index.mapping';
+import type { SearchTiming } from './search-timing';
 
 export interface IndexableDocument {
   id: string;
@@ -15,6 +15,9 @@ export interface IndexableDocument {
   category?: string | null;
   version?: string | null;
   tags: string[];
+  mime: string;
+  size: number;
+  originalFilename?: string | null;
   createdAt: Date;
 }
 
@@ -35,7 +38,7 @@ export class SearchService implements OnModuleInit {
   private readonly index: string;
   private readonly indexVersion: string;
 
-  constructor(config: ConfigService, private readonly prisma: PrismaService) {
+  constructor(config: ConfigService) {
     this.index = config.getOrThrow<string>('elasticsearchIndex');
     this.indexVersion = config.get<string>('elasticsearchIndexVersion') ?? 'v1';
     const apiKey = config.get<string>('elasticsearchApiKey') ?? '';
@@ -105,6 +108,9 @@ export class SearchService implements OnModuleInit {
           metadata: [document.author, document.category, document.version, ...document.tags]
             .filter((value): value is string => Boolean(value))
             .join(' '),
+          mime: document.mime,
+          size: document.size,
+          originalFilename: document.originalFilename ?? '',
           category: document.category ?? '',
           version: document.version ?? '',
           tags: document.tags,
@@ -122,7 +128,11 @@ export class SearchService implements OnModuleInit {
     await this.client.delete({ index: this.index, id: documentId }, { ignore: [404] });
   }
 
-  async search(userId: string, params: SearchParams): Promise<SearchResponse> {
+  async search(
+    userId: string,
+    params: SearchParams,
+    timing: SearchTiming = {},
+  ): Promise<SearchResponse> {
     const page = Math.max(1, params.page);
     const pageSize = Math.min(100, Math.max(1, params.pageSize));
     const filters: any[] = [
@@ -141,6 +151,7 @@ export class SearchService implements OnModuleInit {
           ? [{ createdAt: { order: 'desc' } }]
           : ['_score', { createdAt: 'desc' }];
 
+    const elasticsearchStartedAt = performance.now();
     const response = await this.client.search({
       index: this.index,
       from: (page - 1) * pageSize,
@@ -176,7 +187,9 @@ export class SearchService implements OnModuleInit {
         authors: { terms: { field: 'author.keyword', size: 20 } },
       },
       sort,
-    } as any);
+    } as any).finally(() => {
+      timing.elasticsearchMs = performance.now() - elasticsearchStartedAt;
+    });
 
     const hits = response.hits.hits.map((hit) => {
       const source = (hit._source ?? {}) as Record<string, unknown>;
@@ -190,6 +203,11 @@ export class SearchService implements OnModuleInit {
         category: (source['category'] as string | null) ?? null,
         version: (source['version'] as string | null) ?? null,
         tags: Array.isArray(source['tags']) ? (source['tags'] as string[]) : [],
+        mime: (source['mime'] as string | undefined) ?? undefined,
+        size: typeof source['size'] === 'number' ? (source['size'] as number) : undefined,
+        createdAt: (source['createdAt'] as string | undefined) ?? null,
+        originalFilename: (source['originalFilename'] as string | null | undefined) ?? null,
+        status: (source['status'] as SearchHit['status'] | undefined) ?? undefined,
         highlight: {
           content: highlight['content'],
           title: highlight['title'],
@@ -202,44 +220,6 @@ export class SearchService implements OnModuleInit {
         ? response.hits.total
         : (response.hits.total?.value ?? 0);
 
-    let documents: Array<{
-      id: string;
-      mime: string;
-      size: number;
-      createdAt: Date;
-      originalFilename: string | null;
-      status: string;
-    }> = [];
-
-    try {
-      documents = await this.prisma.document.findMany({
-        where: { userId, id: { in: hits.map((hit) => hit.id) } },
-        select: {
-          id: true,
-          mime: true,
-          size: true,
-          createdAt: true,
-          originalFilename: true,
-          status: true,
-        },
-      });
-    } catch {
-      // La búsqueda sigue siendo útil aunque PostgreSQL no esté disponible.
-    }
-
-    const documentsById = new Map(documents.map((document) => [document.id, document]));
-    const enrichedHits = hits.map((hit) => {
-      const document = documentsById.get(hit.id);
-      return {
-        ...hit,
-        mime: document?.mime,
-        size: document?.size,
-        createdAt: document?.createdAt.toISOString() ?? null,
-        originalFilename: document?.originalFilename ?? null,
-        status: document?.status as SearchHit['status'],
-      } satisfies SearchHit;
-    });
-
     const aggregations = (response.aggregations ?? {}) as Record<
       string,
       { buckets?: Array<{ key: string; doc_count: number }> }
@@ -249,7 +229,7 @@ export class SearchService implements OnModuleInit {
       total,
       page,
       pageSize,
-      items: enrichedHits,
+      items: hits,
       facets: {
         categories: toBuckets(aggregations['categories']),
         tags: toBuckets(aggregations['tags']),

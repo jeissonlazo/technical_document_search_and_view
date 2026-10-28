@@ -13,6 +13,7 @@ const envSchema = z.object({
   ELASTICSEARCH_API_KEY: z.string().optional().default(''),
   SESSION_SECRET: z.string().min(16).default('dev-only-change-me-please'),
   SESSION_TTL_SECONDS: z.coerce.number().default(604800),
+  AUTH_USER_CACHE_TTL_SECONDS: z.coerce.number().default(30),
   R2_ACCOUNT_ID: z.string().optional().default(''),
   R2_ACCESS_KEY_ID: z.string().optional().default(''),
   R2_SECRET_ACCESS_KEY: z.string().optional().default(''),

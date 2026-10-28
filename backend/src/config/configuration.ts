@@ -16,6 +16,7 @@ export default () => {
     elasticsearchApiKey: process.env.ELASTICSEARCH_API_KEY ?? '',
     sessionSecret: process.env.SESSION_SECRET ?? 'dev-only-change-me-please',
     sessionTtlSeconds: Number(process.env.SESSION_TTL_SECONDS ?? 604800),
+    authUserCacheTtlSeconds: Number(process.env.AUTH_USER_CACHE_TTL_SECONDS ?? 30),
     r2: {
       accountId,
       accessKeyId: process.env.R2_ACCESS_KEY_ID ?? '',

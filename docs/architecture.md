@@ -123,6 +123,10 @@ El motor seleccionado es Elasticsearch por sus capacidades de texto completo, re
 
 La aplicación escribe y busca a través del alias `documents`; el índice concreto es `documents-v1`. El comando `pnpm --filter @docs/backend es:reindex` crea un índice nuevo, copia los documentos, recalcula el campo `metadata` desde autor/categoría/versión/tags y mueve el alias de forma atómica. El índice anterior se conserva para rollback manual. Ejecutar en una ventana de baja escritura: la copia no captura documentos escritos entre el snapshot y el cambio de alias. El mapeo compartido está en `backend/src/search/document-index.mapping.ts`.
 
+### Instrumentación de latencia
+
+`GET /api/search` devuelve `Server-Timing` con `auth`, `elasticsearch` y `total`; registra un evento JSON `search_timing` sin incluir el texto de la consulta. Los metadatos `mime`, `size` y `originalFilename` viven también en Elasticsearch para evitar una lectura adicional a PostgreSQL por búsqueda. El usuario de sesión se cachea brevemente en Redis (`AUTH_USER_CACHE_TTL_SECONDS`, 30 s por defecto), conservando la comprobación de `disabledAt`. La metodología y los resultados están en `docs/search-latency.md`.
+
 ## Comunicación SSE
 
 - Angular abre la conexión de eventos autorizada antes de iniciar la carga. El transporte de archivos sigue siendo una solicitud REST individual por documento; los eventos SSE reportan progreso y estado del backend.

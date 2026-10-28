@@ -12,6 +12,13 @@ export const DOCUMENT_INDEX_PROPERTIES = {
     fields: { keyword: { type: 'keyword', ignore_above: 256 } },
   },
   metadata: { type: 'text', analyzer: 'spanish' },
+  mime: { type: 'keyword' },
+  size: { type: 'long' },
+  originalFilename: {
+    type: 'text',
+    analyzer: 'spanish',
+    fields: { keyword: { type: 'keyword', ignore_above: 512 } },
+  },
   category: { type: 'keyword' },
   version: { type: 'keyword' },
   tags: { type: 'keyword' },

@@ -9,6 +9,7 @@ import { RedisService } from '../redis/redis.service';
 
 const SESSION_COOKIE = 'sid';
 const SESSION_PREFIX = 'session:';
+const USER_CACHE_PREFIX = 'auth:user:';
 
 interface SessionPayload {
   userId: string;
@@ -104,9 +105,38 @@ export class AuthService {
   }
 
   async getUser(userId: string): Promise<AuthUser | null> {
+    const cacheKey = `${USER_CACHE_PREFIX}${userId}`;
+    const cached = await this.redis.client.get(cacheKey);
+    if (cached) {
+      try {
+        const user = JSON.parse(cached) as AuthUser & { disabledAt?: string | null };
+        if (user.disabledAt) return null;
+        return {
+          id: user.id,
+          email: user.email,
+          createdAt: user.createdAt,
+        };
+      } catch {
+        await this.redis.client.del(cacheKey);
+      }
+    }
+
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user || user.disabledAt) return null;
-    return toAuthUser(user);
+
+    const authUser = toAuthUser(user);
+    const ttl = this.config.get<number>('authUserCacheTtlSeconds') ?? 30;
+    await this.redis.client.set(
+      cacheKey,
+      JSON.stringify({ ...authUser, disabledAt: null }),
+      'EX',
+      ttl,
+    );
+    return authUser;
+  }
+
+  async invalidateUserCache(userId: string): Promise<void> {
+    await this.redis.client.del(`${USER_CACHE_PREFIX}${userId}`);
   }
 
   async destroySession(sid: string): Promise<void> {
