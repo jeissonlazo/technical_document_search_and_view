@@ -29,12 +29,12 @@ import { I18nService } from '../../../core/i18n.service';
     HlmTr,
   ],
   template: `
-    <div hlmCard>
+    <div hlmCard class="mt-4">
       <div hlmCardContent>
         @if (keys().length === 0) {
           <p class="text-sm muted">{{ i18n.t('apiKeys.empty') }}</p>
         } @else {
-          <div hlmTableContainer>
+          <div hlmTableContainer >
             <table hlmTable>
               <thead hlmTHead>
                 <tr hlmTr>
