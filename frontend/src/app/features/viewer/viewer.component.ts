@@ -91,7 +91,7 @@ import type { ViewerFormat, ViewerTocItem } from './viewer.models';
                   [innerHTML]="markdownHtml()"
                 ></article>
               } @else {
-                <div class="mb-2 flex justify-end">
+                <div class="mb-2 mx-8 flex justify-end">
                   <button hlmBtn variant="outline" size="sm" type="button" (click)="copyText()">
                     {{ i18n.t('viewer.copy') }}
                   </button>
@@ -99,7 +99,7 @@ import type { ViewerFormat, ViewerTocItem } from './viewer.models';
                 <pre
                   #content
                   id="text-content"
-                  class="max-h-[75vh] overflow-auto whitespace-pre-wrap p-2 text-sm"
+                  class="max-h-[75vh] overflow-auto whitespace-pre-wrap p-8 text-sm"
                   [innerHTML]="textHtml()"
                 ></pre>
               }

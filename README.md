@@ -512,4 +512,4 @@ El comando crea un índice nuevo, reindexa los documentos, recalcula el campo `m
 
 ## 15. Uso de IA
 
-El detalle de herramientas, prompts y validación humana está en [docs/ia.md](docs/ia.md). Actualízalo con las herramientas que realmente uses antes de entregar.
+El detalle de herramientas, prompts y validación humana está en [docs/ia.md](docs/ia.md).
