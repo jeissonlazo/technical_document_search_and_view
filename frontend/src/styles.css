@@ -28,6 +28,28 @@
   --ok: #34d399;
 }
 
+/* Puente entre las variables de la app y los tokens que usan los Helm components. */
+@theme {
+  --color-background: var(--surface);
+  --color-foreground: var(--fg);
+  --color-card: var(--surface);
+  --color-card-foreground: var(--fg);
+  --color-primary: var(--accent);
+  --color-primary-foreground: var(--accent-fg);
+  --color-secondary: var(--surface-muted);
+  --color-secondary-foreground: var(--fg);
+  --color-muted: var(--surface-muted);
+  --color-muted-foreground: var(--muted);
+  --color-accent: var(--surface-muted);
+  --color-accent-foreground: var(--fg);
+  --color-destructive: var(--danger);
+  --color-border: var(--border);
+  --color-input: var(--border);
+  --color-ring: var(--accent);
+  --radius-md: 0.5rem;
+  --radius-lg: 0.75rem;
+}
+
 html,
 body {
   height: 100%;

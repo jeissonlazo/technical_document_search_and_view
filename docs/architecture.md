@@ -161,8 +161,8 @@ La aplicación escribe y busca a través del alias `documents`; el índice concr
 ## Frontend
 
 - Angular 22 + TypeScript, componentes standalone, signals y carga diferida de visores.
-- Spartan NG (`@spartan-ng/brain` + CLI/helm) sobre Angular CDK y Tailwind CSS 4; los componentes helm se copian al repositorio y se versionan con él.
-- **Riesgo de versión:** `@spartan-ng/brain` 1.8.3 declara Angular `>=21 <23`, pero el CLI 1.8.3 usa `@schematics/angular` 21.2.14. Validar `ng add`/instalación en Angular 22; si falla, copiar los componentes helm manualmente o fijar Angular 21. No se usa Optimus UI porque su versión 2.x exige Angular 22.1.4+ y es un fork comunitario de PrimeNG.
+- Spartan NG (`@spartan-ng/brain` + CLI/helm) sobre Angular CDK y Tailwind CSS 4; los componentes helm se copian al repositorio y se versionan con él. Button e Input ya están generados en `frontend/src/app/shared/ui` y Login es el piloto; la convención está en `docs/ui-conventions.md`.
+- **Compatibilidad validada:** `@spartan-ng/brain` 1.8.3 declara Angular `>=21 <23`; el CLI 1.8.3 generó componentes Helm en Angular 22 correctamente. No se usa Optimus UI porque su versión 2.x exige Angular 22.1.4+ y es un fork comunitario de PrimeNG.
 - i18n runtime español/inglés con diccionarios y `code` + `params` del backend; temas claro/oscuro con variables CSS y `prefers-color-scheme`; responsive con drawer de filtros y visor a pantalla completa.
 - Interceptores para sesión/API key, errores, correlación y timeout; guards de autenticación; estado de lote en el componente/servicio y recuperación por ID tras recarga.
 - Pruebas: unitarias con Jest/TestBed, integración con MSW y e2e con Playwright; accesibilidad con axe-core.
@@ -312,7 +312,7 @@ Los nombres de rutas son una propuesta para el diseño; se pueden ajustar al imp
 - [ ] Definir el modo de registro (abierto, por invitación o por bandera de entorno) y la política de verificación de email/recuperación de contraseña.
 - [ ] Validar la fidelidad de `docx-preview` solo si se decide mantener DOCX como soporte opcional.
 - [ ] Si se añade edición DOCX, evaluar Tiptap + Import DOCX (Pro/cloud) frente a `docx-editor`, incluyendo coste, licencia y privacidad.
-- [ ] Definir la política de actualización de los componentes helm de Spartan NG y la estrategia de i18n (servicio propio o Transloco).
+- [x] Definir convención inicial de Spartan NG (brain/helm, alias, tema y nomenclatura) en `docs/ui-conventions.md`; la estrategia i18n sigue con el servicio propio.
 - [x] Definir timeout de extracción/indexación y recuperación de trabajos atascados; el máximo de reintentos transitorios queda en 3 reintentos adicionales.
 - [ ] Definir el ámbito de deduplicación y la política cuando el contenido del archivo coincide pero sus metadatos/versiones difieren.
 - [x] Incluir autor, categoría, versión y etiquetas en la búsqueda de texto libre mediante el campo `metadata`.

@@ -1,8 +1,8 @@
 import { Component, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { Router, RouterLink } from '@angular/router';
-import { BrnButton } from '@spartan-ng/brain/button';
-import { BrnInput } from '@spartan-ng/brain/input';
+import { HlmButton } from '@spartan-ng/helm/button';
+import { HlmInput } from '@spartan-ng/helm/input';
 import { apiErrorMessage } from '../../core/api-error';
 import { AuthService } from '../../core/auth.service';
 import { I18nService } from '../../core/i18n.service';
@@ -10,7 +10,7 @@ import { I18nService } from '../../core/i18n.service';
 @Component({
   selector: 'app-login',
   standalone: true,
-  imports: [FormsModule, RouterLink, BrnButton, BrnInput],
+  imports: [FormsModule, RouterLink, HlmButton, HlmInput],
   template: `
     <section class="mx-auto max-w-md rounded-xl p-6 surface">
       <h1 class="mb-4 text-2xl font-bold">{{ i18n.t('auth.loginTitle') }}</h1>
@@ -22,8 +22,8 @@ import { I18nService } from '../../core/i18n.service';
           </label>
           <input
             id="login-email"
-            brnInput
-            class="input mt-1 w-full"
+            hlmInput
+            class="mt-1 w-full"
             type="email"
             name="email"
             [(ngModel)]="email"
@@ -39,8 +39,8 @@ import { I18nService } from '../../core/i18n.service';
           <div class="relative mt-1">
             <input
               id="login-password"
-              brnInput
-              class="input w-full pr-11"
+              hlmInput
+              class="w-full pr-11"
               [type]="showPassword() ? 'text' : 'password'"
               name="password"
               [(ngModel)]="password"
@@ -98,7 +98,7 @@ import { I18nService } from '../../core/i18n.service';
           </p>
         }
 
-        <button brnButton class="btn btn-primary w-full" type="submit" [disabled]="loading()">
+        <button hlmBtn class="w-full" type="submit" [disabled]="loading()">
           {{ loading() ? '…' : i18n.t('auth.loginAction') }}
         </button>
       </form>

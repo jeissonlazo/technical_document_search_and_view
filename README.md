@@ -23,6 +23,7 @@ Aplicación web para cargar documentos técnicos (PDF, TXT y Markdown), procesar
 - [Decisiones técnicas](docs/decisiones-tecnicas.md)
 - [Requerimientos de frontend](docs/requerimientos-frontend.md)
 - [Revisión del stack de visualización](docs/revision-visualizacion.md)
+- [Convención UI y Spartan NG](docs/ui-conventions.md)
 - [Uso de IA](docs/ia.md)
 
 ## Estructura

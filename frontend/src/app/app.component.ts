@@ -12,7 +12,7 @@ import { ThemeService } from './core/theme.service';
   template: `
     <div class="min-h-screen">
       <header class="border-b" style="border-color: var(--border); background: var(--surface);">
-        <div class="mx-auto flex max-w-6xl flex-wrap items-center gap-3 px-4 py-3">
+        <div class="mx-auto flex max-w-7xl flex-wrap items-center gap-3 px-4 py-3">
           <a routerLink="/search" class="text-lg font-bold">{{ i18n.t('app.name') }}</a>
 
           @if (auth.user(); as user) {
