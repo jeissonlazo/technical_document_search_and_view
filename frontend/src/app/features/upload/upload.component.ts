@@ -31,7 +31,7 @@ const MAX_FILES = 20;
         <p class="mt-1 text-sm muted">{{ i18n.t('upload.subtitle') }}</p>
       </div>
 
-      <div class="grid gap-5 lg:grid-cols-[6fr_5fr]">
+      <div class="grid gap-5 lg:grid-cols-[4fr_6fr]">
         <div class="space-y-5">
           <input
             #fileInput

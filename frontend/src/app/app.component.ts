@@ -1,5 +1,5 @@
 import { Component, effect, inject } from '@angular/core';
-import { RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
+import { Router, RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
 import { AuthService } from './core/auth.service';
 import { I18nService } from './core/i18n.service';
 import { SseService } from './core/sse.service';
@@ -77,6 +77,7 @@ import { ThemeService } from './core/theme.service';
   `,
 })
 export class AppComponent {
+  private readonly router = inject(Router);
   readonly auth = inject(AuthService);
   readonly i18n = inject(I18nService);
   readonly theme = inject(ThemeService);
@@ -94,6 +95,10 @@ export class AppComponent {
   }
 
   async logout(): Promise<void> {
-    await this.auth.logout();
+    try {
+      await this.auth.logout();
+    } finally {
+      await this.router.navigate(['/login'], { replaceUrl: true });
+    }
   }
 }
