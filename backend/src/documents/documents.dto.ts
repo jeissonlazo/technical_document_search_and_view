@@ -23,6 +23,11 @@ export class CreateDocumentDto {
   category?: string;
 
   @IsOptional()
+  @IsString({ message: 'Las categorías deben ser texto.' })
+  @MaxLength(2000, { message: 'Las categorías no pueden superar 2000 caracteres.' })
+  categories?: string;
+
+  @IsOptional()
   @IsString({ message: 'La versión debe ser texto.' })
   @MaxLength(80, { message: 'La versión no puede superar 80 caracteres.' })
   version?: string;

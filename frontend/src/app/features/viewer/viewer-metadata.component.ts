@@ -29,7 +29,7 @@ import { I18nService } from '../../core/i18n.service';
           </div>
           <div class="flex justify-between gap-3">
             <dt class="muted">{{ i18n.t('viewer.category') }}</dt>
-            <dd class="text-right">{{ document().category || '—' }}</dd>
+            <dd class="text-right">{{ categoriesLabel() }}</dd>
           </div>
           <div class="flex justify-between gap-3">
             <dt class="muted">{{ i18n.t('viewer.version') }}</dt>
@@ -106,6 +106,16 @@ export class ViewerMetadataComponent {
     if (mime.includes('markdown')) return 'Markdown';
     if (mime.includes('wordprocessingml')) return 'Word';
     return 'Texto';
+  }
+
+  categoriesLabel(): string {
+    const known = this.document().categories ?? [];
+    const categories: string[] = known.length
+      ? known
+      : this.document().category
+        ? [this.document().category as string]
+        : [];
+    return categories.length ? categories.join(', ') : '—';
   }
 
   formatSize(bytes: number): string {

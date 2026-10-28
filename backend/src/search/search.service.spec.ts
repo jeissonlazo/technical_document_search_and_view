@@ -116,7 +116,7 @@ describe('SearchService', () => {
     expect(filters).toEqual([
       { term: { userId: 'user-1' } },
       { term: { status: 'INDEXED' } },
-      { term: { category: 'Arquitectura' } },
+      { term: { categories: 'Arquitectura' } },
       { terms: { tags: ['ddd', 'api'] } },
       { term: { 'author.keyword': 'Ana' } },
     ]);

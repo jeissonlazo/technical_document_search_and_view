@@ -34,6 +34,8 @@
   --color-foreground: var(--fg);
   --color-card: var(--surface);
   --color-card-foreground: var(--fg);
+  --color-popover: var(--surface);
+  --color-popover-foreground: var(--fg);
   --color-primary: var(--accent);
   --color-primary-foreground: var(--accent-fg);
   --color-secondary: var(--surface-muted);
@@ -488,4 +490,71 @@ mark.search-hit.search-hit-current {
   border: 0;
   border-top: 1px solid var(--border);
   margin: 1.5rem 0;
+}
+
+/* Editor TipTap: reutiliza la tipografía de .markdown-body y añade solo lo
+   que necesita el área editable. */
+.tiptap-prose {
+  min-height: 26rem;
+  padding: 1.25rem 1.5rem;
+  outline: none;
+}
+
+.tiptap-prose:focus,
+.tiptap-prose:focus-visible {
+  outline: none;
+}
+
+.tiptap-prose p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  float: left;
+  height: 0;
+  color: var(--muted);
+  pointer-events: none;
+}
+
+.tiptap-prose > *:first-child {
+  margin-top: 0;
+}
+
+.tiptap-prose > *:last-child {
+  margin-bottom: 0;
+}
+
+.tiptap-prose .tableWrapper {
+  overflow-x: auto;
+}
+
+.tiptap-prose th,
+.tiptap-prose td {
+  position: relative;
+  min-width: 4rem;
+}
+
+.tiptap-prose .selectedCell::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  pointer-events: none;
+}
+
+.tiptap-prose .column-resize-handle {
+  position: absolute;
+  top: 0;
+  right: -2px;
+  bottom: 0;
+  width: 4px;
+  background: var(--accent);
+  pointer-events: none;
+}
+
+.tiptap-prose a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.tiptap-prose ::selection {
+  background: color-mix(in srgb, var(--accent) 30%, transparent);
 }

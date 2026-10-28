@@ -18,6 +18,12 @@ export const routes: Routes = [
       import('./features/upload/upload.component').then((m) => m.UploadComponent),
   },
   {
+    path: 'editor',
+    canActivate: [authGuard],
+    loadComponent: () =>
+      import('./features/editor/editor.component').then((m) => m.EditorComponent),
+  },
+  {
     path: 'search',
     canActivate: [authGuard],
     loadComponent: () =>

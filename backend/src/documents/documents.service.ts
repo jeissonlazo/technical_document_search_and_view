@@ -72,6 +72,7 @@ export class DocumentsService {
     }
 
     this.validateContent(file.buffer, extension);
+    const categories = normalizeCategories(dto.categories, dto.category);
 
     const documentId = randomUUID();
     const bucket = this.config.getOrThrow<string>('r2.bucket');
@@ -92,7 +93,8 @@ export class DocumentsService {
             title: dto.title.trim(),
             description: dto.description?.trim() || null,
             author: dto.author?.trim() || null,
-            category: dto.category?.trim() || null,
+            category: categories[0] ?? null,
+            categories,
             version: dto.version?.trim() || null,
             tags: splitTags(dto.tags),
             originalFilename,
@@ -358,6 +360,9 @@ function parseBatchMetadata(
     if (Array.isArray(record['tags'])) {
       record['tags'] = record['tags'].map((tag) => String(tag)).join(',');
     }
+    if (Array.isArray(record['categories'])) {
+      record['categories'] = JSON.stringify(record['categories'].map((category) => String(category)));
+    }
     return record;
   });
 }
@@ -472,6 +477,25 @@ function splitTags(tags?: string): string[] {  if (!tags) return [];
   ).slice(0, 20);
 }
 
+function normalizeCategories(raw?: string, legacy?: string): string[] {
+  let values: string[] = [];
+
+  if (raw) {
+    try {
+      const parsed: unknown = JSON.parse(raw);
+      if (Array.isArray(parsed)) values = parsed.map((value) => String(value));
+    } catch {
+      values = raw.split(',');
+    }
+  }
+
+  if (values.length === 0 && legacy) values = [legacy];
+
+  return Array.from(
+    new Set(values.map((value) => value.trim()).filter(Boolean)),
+  ).slice(0, 20);
+}
+
 function mimeForExtension(extension: string): string {
   switch (extension) {
     case '.pdf':
@@ -494,6 +518,7 @@ export function toMetadata(document: PrismaDocument): DocumentMetadata {
     description: document.description,
     author: document.author,
     category: document.category,
+    categories: document.categories,
     version: document.version,
     tags: document.tags,
     originalFilename: document.originalFilename,

@@ -13,7 +13,14 @@ async function main(): Promise<void> {
 
   const documents = await prisma.document.findMany({
     where: { status: 'INDEXED' },
-    select: { id: true, mime: true, size: true, originalFilename: true },
+    select: {
+      id: true,
+      mime: true,
+      size: true,
+      originalFilename: true,
+      category: true,
+      categories: true,
+    },
   });
 
   const operations = documents.flatMap((document) => [
@@ -23,6 +30,8 @@ async function main(): Promise<void> {
         mime: document.mime,
         size: document.size,
         originalFilename: document.originalFilename ?? '',
+        category: document.category ?? '',
+        categories: document.categories,
       },
     },
   ]);

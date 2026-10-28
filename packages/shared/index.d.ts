@@ -18,6 +18,7 @@ export interface DocumentMetadata {
   description?: string | null;
   author?: string | null;
   category?: string | null;
+  categories?: string[];
   version?: string | null;
   tags: string[];
   originalFilename?: string | null;
@@ -51,6 +52,7 @@ export interface SearchHit {
   description?: string | null;
   author?: string | null;
   category?: string | null;
+  categories?: string[];
   version?: string | null;
   tags: string[];
   mime?: string;

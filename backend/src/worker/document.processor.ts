@@ -80,6 +80,7 @@ export class DocumentProcessor extends WorkerHost {
             description: document.description,
             author: document.author,
             category: document.category,
+            categories: document.categories,
             version: document.version,
             tags: document.tags,
             mime: document.mime,

@@ -12,6 +12,7 @@ import { HlmInput } from '@spartan-ng/helm/input';
 import { HlmTextarea } from '@spartan-ng/helm/textarea';
 import type { UploadMetadata } from '../../../core/api.service';
 import { I18nService } from '../../../core/i18n.service';
+import { CategoryComboboxComponent } from '../../../shared/document/category-combobox.component';
 
 @Component({
   selector: 'app-upload-metadata-form',
@@ -26,9 +27,10 @@ import { I18nService } from '../../../core/i18n.service';
     HlmCardTitle,
     HlmInput,
     HlmTextarea,
+    CategoryComboboxComponent,
   ],
   template: `
-    <div hlmCard>
+    <div hlmCard class="space-y-4" class="mt-4">
       <div hlmCardHeader class="flex flex-row items-start justify-between gap-2">
         <div>
           <h2 hlmCardTitle>{{ i18n.t('upload.metadata') }}</h2>
@@ -58,11 +60,6 @@ import { I18nService } from '../../../core/i18n.service';
           </label>
 
           <label class="block text-sm font-medium">
-            {{ i18n.t('upload.category') }}
-            <input hlmInput class="mt-1 w-full" name="category" [(ngModel)]="metadata.category" />
-          </label>
-
-          <label class="block text-sm font-medium">
             {{ i18n.t('upload.version') }}
             <input hlmInput class="mt-1 w-full" name="version" [(ngModel)]="metadata.version" />
           </label>
@@ -71,6 +68,14 @@ import { I18nService } from '../../../core/i18n.service';
             {{ i18n.t('upload.tags') }}
             <input hlmInput class="mt-1 w-full" name="tags" [(ngModel)]="metadata.tags" />
           </label>
+
+          <div class="md:col-span-2">
+            <app-category-combobox
+              controlId="upload-category"
+              [categories]="metadata.categories ?? []"
+              (categoriesChange)="metadata.categories = $event"
+            />
+          </div>
 
           <label class="block text-sm font-medium md:col-span-2">
             {{ i18n.t('upload.description') }}

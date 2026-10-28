@@ -13,6 +13,7 @@ export interface IndexableDocument {
   description?: string | null;
   author?: string | null;
   category?: string | null;
+  categories?: string[];
   version?: string | null;
   tags: string[];
   mime: string;
@@ -105,13 +106,20 @@ export class SearchService implements OnModuleInit {
           description: document.description ?? '',
           content,
           author: document.author ?? '',
-          metadata: [document.author, document.category, document.version, ...document.tags]
+          metadata: [
+            document.author,
+            document.category,
+            ...(document.categories ?? []),
+            document.version,
+            ...document.tags,
+          ]
             .filter((value): value is string => Boolean(value))
             .join(' '),
           mime: document.mime,
           size: document.size,
           originalFilename: document.originalFilename ?? '',
-          category: document.category ?? '',
+          category: document.category ?? document.categories?.[0] ?? '',
+          categories: document.categories ?? [],
           version: document.version ?? '',
           tags: document.tags,
           userId: document.userId,
@@ -140,7 +148,7 @@ export class SearchService implements OnModuleInit {
       { term: { status: 'INDEXED' } },
     ];
 
-    if (params.category) filters.push({ term: { category: params.category } });
+    if (params.category) filters.push({ term: { categories: params.category } });
     if (params.tags?.length) filters.push({ terms: { tags: params.tags } });
     if (params.author) filters.push({ term: { 'author.keyword': params.author } });
 
@@ -190,7 +198,7 @@ export class SearchService implements OnModuleInit {
         },
       },
       aggs: {
-        categories: { terms: { field: 'category', size: 20 } },
+        categories: { terms: { field: 'categories', size: 20 } },
         tags: { terms: { field: 'tags', size: 30 } },
         authors: { terms: { field: 'author.keyword', size: 20 } },
       },
@@ -209,6 +217,7 @@ export class SearchService implements OnModuleInit {
         description: (source['description'] as string | null) ?? null,
         author: (source['author'] as string | null) ?? null,
         category: (source['category'] as string | null) ?? null,
+        categories: Array.isArray(source['categories']) ? (source['categories'] as string[]) : [],
         version: (source['version'] as string | null) ?? null,
         tags: Array.isArray(source['tags']) ? (source['tags'] as string[]) : [],
         mime: (source['mime'] as string | undefined) ?? undefined,

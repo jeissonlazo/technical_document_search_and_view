@@ -21,6 +21,7 @@ export interface UploadMetadata {
   description?: string;
   author?: string;
   category?: string;
+  categories?: string[];
   version?: string;
   tags?: string;
 }
@@ -59,6 +60,10 @@ export class ApiService {
 
     for (const [key, value] of Object.entries(metadata)) {
       if (value !== undefined && value !== null && value !== '') {
+        if (key === 'categories' && Array.isArray(value)) {
+          if (value.length) form.append(key, JSON.stringify(value));
+          continue;
+        }
         form.append(key, String(value));
       }
     }

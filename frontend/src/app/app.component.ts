@@ -32,6 +32,13 @@ import { ThemeService } from './core/theme.service';
                 {{ i18n.t('nav.upload') }}
               </a>
               <a
+                routerLink="/editor"
+                routerLinkActive="font-semibold"
+                class="rounded px-2 py-1 hover:bg-slate-100 dark:hover:bg-slate-800"
+              >
+                {{ i18n.t('nav.editor') }}
+              </a>
+              <a
                 routerLink="/settings"
                 routerLinkActive="font-semibold"
                 class="rounded px-2 py-1 hover:bg-slate-100 dark:hover:bg-slate-800"

@@ -20,6 +20,7 @@ export const DOCUMENT_INDEX_PROPERTIES = {
     fields: { keyword: { type: 'keyword', ignore_above: 512 } },
   },
   category: { type: 'keyword' },
+  categories: { type: 'keyword' },
   version: { type: 'keyword' },
   tags: { type: 'keyword' },
   userId: { type: 'keyword' },

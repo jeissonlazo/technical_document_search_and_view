@@ -24,6 +24,7 @@ frontend/src/app/shared/ui/
   textarea/src/lib/hlm-textarea.ts
   card/src/lib/hlm-card.ts
   badge/src/lib/hlm-badge.ts
+  combobox/src/lib/hlm-combobox.ts
   table/src/lib/hlm-table.ts
   progress/src/lib/hlm-progress.ts
   utils/src/lib/hlm.ts
@@ -88,7 +89,7 @@ El generador actualiza `components.json` y los paths de `tsconfig.json`. Revisar
 
 - **Login:** `HlmButton` y `HlmInput`.
 - **Búsqueda:** resultados extraídos a `app-search-results` y `app-document-icon`; los controles propios siguen pendientes.
-- **Carga:** dividida en `app-upload-dropzone`, `app-upload-metadata-form` y `app-upload-queue`; usa `HlmCard`, `HlmBadge`, `HlmInput`, `HlmTextarea`, `HlmButton` y `HlmProgress`.
+- **Carga:** dividida en `app-upload-dropzone`, `app-upload-metadata-form` y `app-upload-queue`; usa `HlmCard`, `HlmBadge`, `HlmInput`, `HlmTextarea`, `HlmButton`, `HlmProgress` y `app-category-combobox` (Combobox múltiple con chips; las categorías se persisten como `string[]`).
 - **Visor:** dividido en `app-viewer-header`, `app-viewer-outline` y `app-viewer-metadata`; usa `HlmCard`, `HlmBadge` y `HlmButton`. Los renderers PDF/DOCX permanecen especializados.
 - **Ajustes:** dividido en `app-api-key-form` y `app-api-key-table`; usa `HlmCard`, `HlmInput`, `HlmButton` y `HlmTable`.
 
@@ -99,6 +100,7 @@ features/upload/components/
   upload-dropzone.component.ts
   upload-metadata-form.component.ts
   upload-queue.component.ts
+  category-combobox.component.ts
 
 features/viewer/
   viewer-header.component.ts

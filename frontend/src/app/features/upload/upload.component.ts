@@ -76,6 +76,7 @@ export class UploadComponent {
     description: '',
     author: '',
     category: '',
+    categories: [],
     version: '',
     tags: '',
   };

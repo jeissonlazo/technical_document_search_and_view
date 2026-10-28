@@ -384,6 +384,7 @@ curl -X POST http://localhost:4200/api/documents \
   -F "title=Manual de operaciones" \
   -F "author=Jeisson" \
   -F "category=Manuales" \
+  -F 'categories=["Manuales","Operaciones"]' \
   -F "tags=pdf,operaciones" \
   -F "version=1.0"
 ```
@@ -407,7 +408,7 @@ curl -X POST http://localhost:4200/api/documents/batch \
   -F "files=@manual.pdf;type=application/pdf" \
   -F "files=@notas.md;type=text/markdown" \
   -F 'metadata=[
-    {"title":"Manual de operaciones","author":"Jeisson","category":"Manuales","tags":["pdf","operaciones"],"version":"1.0"},
+    {"title":"Manual de operaciones","author":"Jeisson","category":"Manuales","categories":["Manuales","Operaciones"],"tags":["pdf","operaciones"],"version":"1.0"},
     {"title":"Notas de arquitectura","author":"Jeisson","category":"Arquitectura","tags":["markdown","arquitectura"],"version":"1.0"}
   ]'
 ```

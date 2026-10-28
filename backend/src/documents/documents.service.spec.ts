@@ -83,24 +83,35 @@ describe('DocumentsService', () => {
     expect(storage.put).not.toHaveBeenCalled();
   });
 
-  it('crea un documento en PROCESSING y encola la indexación', async () => {
+  it('crea un documento en PROCESSING y normaliza categorías múltiples', async () => {
     const result = await service.create(
       'user-1',
       file({ originalname: 'notas.txt' }),
-      dto({ title: '  Notas técnicas  ', tags: 'uno, dos, uno' }),
+      dto({
+        title: '  Notas técnicas  ',
+        tags: 'uno, dos, uno',
+        categories: JSON.stringify(['Arquitectura', 'Pruebas', 'Arquitectura']),
+      }),
     );
 
     expect(result.status).toBe('PROCESSING');
     expect(result.trackingId).toBe(result.id);
     expect(result.title).toBe('Notas técnicas');
     expect(result.tags).toEqual(['uno', 'dos']);
+    expect(result.categories).toEqual(['Arquitectura', 'Pruebas']);
+    expect(result.category).toBe('Arquitectura');
     expect(storage.put).toHaveBeenCalledWith(
       expect.stringContaining('/original.txt'),
       expect.any(Buffer),
       'text/plain',
     );
     expect(tx.document.create).toHaveBeenCalledWith({
-      data: expect.objectContaining({ status: 'PROCESSING', title: 'Notas técnicas' }),
+      data: expect.objectContaining({
+        status: 'PROCESSING',
+        title: 'Notas técnicas',
+        category: 'Arquitectura',
+        categories: ['Arquitectura', 'Pruebas'],
+      }),
     });
     expect(tx.outboxEvent.create).toHaveBeenCalledWith({
       data: { documentId: result.id },

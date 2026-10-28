@@ -42,6 +42,12 @@
       ],
       "@spartan-ng/helm/progress": [
         "./src/app/shared/ui/progress/src/index.ts"
+      ],
+      "@spartan-ng/helm/combobox": [
+        "./src/app/shared/ui/combobox/src/index.ts"
+      ],
+      "@spartan-ng/helm/input-group": [
+        "./src/app/shared/ui/input-group/src/index.ts"
       ]
     }
   },

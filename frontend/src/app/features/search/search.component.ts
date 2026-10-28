@@ -286,7 +286,7 @@ type SortMode = 'relevance' | 'title' | 'date';
                   </div>
                   <div class="flex justify-between gap-4">
                     <dt class="muted">{{ i18n.t('search.category') }}</dt>
-                    <dd class="text-right">{{ detail()?.category ?? hit.category ?? '—' }}</dd>
+                    <dd class="text-right">{{ categoryLabel(hit) }}</dd>
                   </div>
                   <div class="flex justify-between gap-4">
                     <dt class="muted">{{ i18n.t('search.version') }}</dt>
@@ -567,6 +567,12 @@ export class SearchComponent implements OnInit {
     if (mime.includes('markdown') || extension === 'md' || extension === 'markdown') return 'Markdown';
     if (mime.includes('wordprocessingml') || extension === 'docx') return 'Word';
     return 'Texto';
+  }
+
+  categoryLabel(hit: SearchHit): string {
+    const categories = this.detail()?.categories ?? hit.categories;
+    if (categories?.length) return categories.join(', ');
+    return this.detail()?.category ?? hit.category ?? '—';
   }
 
   formatSize(bytes?: number): string {

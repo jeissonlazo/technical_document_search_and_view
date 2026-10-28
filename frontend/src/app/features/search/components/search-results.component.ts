@@ -39,7 +39,7 @@ export type SearchViewMode = 'list' | 'grid' | 'details';
                 <span class="min-w-0 flex-1">
                   <span class="block truncate text-sm font-medium">{{ hit.title }}</span>
                   <span class="mt-0.5 block truncate text-xs muted">
-                    {{ hit.author || hit.category || hit.originalFilename || '—' }}
+                    {{ hit.author || categoryLabel(hit) || hit.originalFilename || '—' }}
                   </span>
                 </span>
               </button>
@@ -62,7 +62,7 @@ export type SearchViewMode = 'list' | 'grid' | 'details';
                 />
                 <span class="mt-2 block w-full truncate text-sm font-medium">{{ hit.title }}</span>
                 <span class="mt-1 block w-full truncate text-xs muted">
-                  {{ hit.author || hit.category || '—' }}
+                  {{ hit.author || categoryLabel(hit) || '—' }}
                 </span>
                 <span class="mt-2 flex w-full items-center justify-between gap-2">
                   <span class="text-xs muted">{{ typeLabel(hit) }}</span>
@@ -90,7 +90,7 @@ export type SearchViewMode = 'list' | 'grid' | 'details';
                 <span class="min-w-0 flex-1">
                   <span class="block truncate text-sm font-medium">{{ hit.title }}</span>
                   <span class="mt-0.5 block truncate text-xs muted">
-                    {{ hit.author || '—' }} · {{ hit.category || '—' }} · v{{ hit.version || '—' }}
+                    {{ hit.author || '—' }} · {{ categoryLabel(hit) }} · v{{ hit.version || '—' }}
                   </span>
                 </span>
                 <span class="text-xs muted">{{ formatDate(hit.createdAt) }}</span>
@@ -123,6 +123,11 @@ export class SearchResultsComponent {
     if (mime.includes('markdown') || extension === 'md' || extension === 'markdown') return 'Markdown';
     if (mime.includes('wordprocessingml') || extension === 'docx') return 'Word';
     return 'Texto';
+  }
+
+  categoryLabel(hit: SearchHit): string {
+    if (hit.categories?.length) return hit.categories.join(', ');
+    return hit.category || '—';
   }
 
   formatDate(value?: string | null): string {

@@ -254,7 +254,7 @@ El sistema aplica backpressure y límites configurables para tamaño por archivo
 
 | Tabla | Campos principales |
 | --- | --- |
-| `documents` | `id` UUID, `title`, `description`, `author`, `category`, `version`, `tags`, `original_filename`, `idempotency_key`, `status`, `mime`, `size`, `checksum`, `bucket`, `object_key`, `normalized_text_key`, `error_code`, `error_message`, `created_at`, `updated_at`, `indexed_at` |
+| `documents` | `id` UUID, `title`, `description`, `author`, `category`, `categories`, `version`, `tags`, `original_filename`, `idempotency_key`, `status`, `mime`, `size`, `checksum`, `bucket`, `object_key`, `normalized_text_key`, `error_code`, `error_message`, `created_at`, `updated_at`, `indexed_at` |
 | `outbox_events` | `id`, `document_id`, `status` (`PENDING`/`PUBLISHED`), `attempts`, `available_at`, `last_error`, `created_at`, `processed_at` |
 | `users` | `id`, `email` único, `password_hash`, `created_at`, `disabled_at` |
 | `api_keys` | `id`, `user_id`, `name`, `prefix`, `key_hash`, `last_used_at`, `expires_at`, `revoked_at` |

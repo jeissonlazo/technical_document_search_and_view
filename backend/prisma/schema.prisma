@@ -47,6 +47,7 @@ model Document {
   description       String?
   author            String?
   category          String?
+  categories        String[]       @default([])
   version           String?
   tags              String[]       @default([])
   originalFilename  String?
