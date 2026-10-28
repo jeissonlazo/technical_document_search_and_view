@@ -140,6 +140,29 @@ describe('DocumentProcessor', () => {
     );
   });
 
+  it('marca un timeout de extracción como fallo transitorio', async () => {
+    extraction.extract.mockImplementation(
+      () => new Promise((resolve) => setTimeout(() => resolve('tarde'), 100)),
+    );
+    const fast = new DocumentProcessor(
+      prisma as never,
+      extraction as never,
+      search as never,
+      events as never,
+      storage as never,
+      { get: () => 10 } as never,
+    );
+
+    await expect(fast.process(job(0))).rejects.toMatchObject({
+      code: 'PROCESSING_TIMEOUT',
+      retryable: true,
+    });
+    expect(prisma.document.update).toHaveBeenLastCalledWith({
+      where: { id: 'doc-1' },
+      data: expect.objectContaining({ status: 'PROCESSING' }),
+    });
+  });
+
   it('indexa y publica INDEXED en el camino feliz', async () => {
     await processor.process(job(0));
 

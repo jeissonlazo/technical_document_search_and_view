@@ -29,6 +29,7 @@ const envSchema = z.object({
   OUTBOX_MAX_ATTEMPTS: z.coerce.number().default(10),
   MAX_TEXT_CHARS: z.coerce.number().default(2_000_000),
   PROCESSING_TIMEOUT_MS: z.coerce.number().default(60_000),
+  QUEUE_OPERATION_TIMEOUT_MS: z.coerce.number().default(2_000),
 });
 
 export type Env = z.infer<typeof envSchema>;

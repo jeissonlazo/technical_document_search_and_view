@@ -12,7 +12,7 @@ Los estados persistidos del documento son `RECEIVED`, `PROCESSING`, `INDEXED` y 
 | --- | --- | --- |
 | Angular + TypeScript + Spartan NG | Resuelve una interfaz con varios estados coordinados: selección de lote, subida secuencial, progreso por documento, búsqueda, filtros, visor y actualización SSE. Spartan NG aporta primitivas accesibles sobre Angular CDK y estilos Tailwind que se copian al proyecto; no impone una versión fija de Angular. | Requiere mantener los componentes helm copiados, Tailwind CSS 4 y una capa propia para i18n, temas y carga de archivos, que Spartan no incluye. |
 | NestJS + TypeScript | Organiza API REST, validación, permisos, servicios de documento, integración con BullMQ y endpoints SSE bajo módulos y proveedores separados. El mismo lenguaje y tipos facilitan mantener contratos con Angular. | El backend debe separar API y worker en procesos ejecutables distintos para que extracción intensiva no afecte peticiones y streams SSE. |
-| PostgreSQL | Mantiene relaciones y restricciones para metadatos, versiones, permisos y estados, además de transacciones para registrar documentos y eventos outbox si se implementan. | No será el motor de búsqueda de contenido en esta decisión; hay que mantener consistencia eventual con la proyección Elasticsearch. |
+| PostgreSQL | Mantiene relaciones y restricciones para metadatos, versiones, permisos, estados y eventos outbox, además de transacciones para registrar documentos. | No será el motor de búsqueda de contenido en esta decisión; hay que mantener consistencia eventual con la proyección Elasticsearch. |
 | Elasticsearch | Cubre texto completo sobre contenido y metadatos, relevancia ponderada, filtros, paginación y fragmentos resaltados. Se alinea directamente con los requisitos de búsqueda y evita consultas `LIKE`. | Añade un servicio que configurar, vigilar y reconciliar. El volumen máximo aún no se conoce y su capacidad deberá comprobarse con pruebas representativas. |
 | Redis + BullMQ | Mantiene trabajos asíncronos independientes, reintentos, backoff y concurrencia configurable para extracción e indexación. | Redis es una dependencia adicional y no reemplaza la cola secuencial de subida de Angular. Los trabajos deben ser idempotentes porque pueden reintentarse. |
 | SSE | El flujo requerido es principalmente unidireccional: el servidor notifica cambios de estado al navegador. Es apropiado para progreso sin polling; Angular usa HTTP para enviar cargas y búsquedas. | Una conexión SSE puede cortarse; la interfaz debe reconectar y consultar el estado persistido. El balanceador debe permitir conexiones HTTP de larga duración. |
@@ -55,12 +55,12 @@ flowchart LR
 ## Flujo de carga e indexación
 
 1. Angular permite seleccionar un lote de tamaño variable. Mantiene una cola local y envía un solo archivo a la vez. El archivo siguiente no empieza a subirse hasta que el backend responde al anterior.
-2. Angular envía cada archivo y sus metadatos a `POST /api/documents` como `multipart/form-data`.
+2. Angular envía cada archivo y sus metadatos a `POST /api/documents` como `multipart/form-data`, con un `Idempotency-Key` por archivo.
 3. NestJS valida autorización, formato real, tamaño, nombre de archivo, campos y metadatos. Se aceptan TXT UTF-8, Markdown UTF-8 y PDF con texto extraíble. DOCX no es requisito de la v1; el código existente lo admite como soporte opcional. El nombre se normaliza y se rechazan rutas, caracteres de control, nombres reservados y longitudes excesivas; la clave de R2 usa UUID y extensión, no el nombre original. No se hace OCR en esta versión.
 4. El backend conserva el original en Cloudflare R2 mediante AWS SDK para JavaScript y endpoint compatible con S3, detrás de una interfaz de almacenamiento. El bucket es privado; para tests offline se puede usar MinIO con la misma interfaz.
-5. PostgreSQL registra metadatos, clave de objeto estable, tamaño, MIME, checksum y estado inicial `PROCESSING`. La solicitud devuelve `202 Accepted` con `trackingId` solo cuando archivo y trabajo quedaron aceptados de forma recuperable.
-6. NestJS publica en BullMQ un trabajo que contiene el ID del documento y referencias necesarias, no los bytes del archivo. El estado pasa a `PROCESSING` mientras el trabajo espera o está activo. Si se implementa transactional outbox, el evento pendiente se escribe en PostgreSQL dentro de la misma transacción del registro; un dispatcher lo publica a Redis.
-7. El worker recupera el archivo, extrae y normaliza texto, y guarda el texto con una clave de objeto estable para que el visor pueda leerlo y el índice pueda reconstruirse. El original se conserva según la política de retención.
+5. PostgreSQL registra metadatos, clave de objeto estable, tamaño, MIME, checksum, `idempotencyKey` y estado inicial `PROCESSING` dentro de la misma transacción que crea un `OutboxEvent` pendiente. La solicitud devuelve `202 Accepted` con `trackingId`; si Redis está caído, el evento queda pendiente y el reconciliador lo publica después.
+6. El dispatcher del outbox publica en BullMQ un trabajo que contiene el ID del documento y referencias necesarias, no los bytes del archivo. Un reconciliador detecta documentos `PROCESSING` atascados sin job y los reencola.
+7. El worker recupera el archivo, extrae y normaliza texto, y guarda el texto con una clave de objeto estable para que el visor pueda leerlo y el índice pueda reconstruirse. En reintentos reutiliza `normalized.txt` si existe. El original se conserva según la política de retención. El texto se recorta al límite configurable `MAX_TEXT_CHARS`.
 8. El worker envía a Elasticsearch una proyección con el texto indexable, título, descripción, metadatos, etiquetas, versión e identificador estable. El trabajo debe ser idempotente, usando el ID del documento como clave para que un reintento no duplique resultados.
 9. Una vez que Elasticsearch confirma la operación de indexación, el backend actualiza el registro PostgreSQL a `INDEXED`. Si ocurre un fallo definitivo o se agotan los reintentos, registra `ERROR` y un código/mensaje visible. Los errores transitorios pueden reintentarse según la política de BullMQ.
 10. El cambio de estado se publica como evento SSE. El error de un archivo solo afecta a ese documento; Angular muestra su resultado y continúa con el próximo elemento de la cola.
@@ -68,8 +68,8 @@ flowchart LR
 ### Fallos y consistencia
 
 - PostgreSQL es la fuente de verdad para metadatos y estado. Elasticsearch es un índice derivado que se puede reconstruir a partir del contenido conservado.
-- Almacenar el archivo y publicar el trabajo en Redis son operaciones entre sistemas distintos y no forman una transacción distribuida. Si se necesita garantizar la publicación tras una caída entre ambas operaciones, implementar transactional outbox. Para un prototipo sin outbox, añadir compensación y reconciliación que detecten documentos atascados en `PROCESSING` y objetos sin registro.
-- Si el almacenamiento falla antes de que la API acepte la carga, responder con error y no crear un documento procesable. Si falla la publicación del trabajo después de guardar el registro, no dejarlo indefinidamente en `PROCESSING`; recuperar mediante outbox o marcar error recuperable y permitir reintento.
+- Almacenar el archivo y publicar el trabajo en Redis son operaciones entre sistemas distintos. El proyecto usa un **outbox transaccional** en PostgreSQL: el documento y el evento pendiente se crean juntos; el dispatcher publica a Redis y el reconciliador reintenta los pendientes y los documentos `PROCESSING` atascados. El dispatcher usa timeouts para que una caída de Redis no bloquee la respuesta inicial.
+- Si el almacenamiento falla antes de que la API acepte la carga, responder con error y no crear un documento procesable. Si falla la publicación del trabajo después de guardar el registro, el outbox permanece `PENDING` y se reintenta; el documento no se marca `ERROR` por una caída temporal de Redis.
 - BullMQ puede volver a ejecutar trabajos; extracción, escritura del texto normalizado e indexación deben ser idempotentes. Limitar reintentos, registrar el último error y permitir reintento individual.
 - No marcar `INDEXED` hasta que Elasticsearch confirme el documento. Si la actualización de estado en PostgreSQL falla después de indexar, la reconciliación debe completar el estado sin crear duplicados.
 - PDF protegido, corrupto o sin texto extraíble termina en `ERROR` con código y mensaje comprensibles. El worker continúa con los demás trabajos y Angular continúa con los archivos restantes.
@@ -89,7 +89,7 @@ Cada documento aceptado crea un trabajo BullMQ independiente, identificado con e
 
 | Clase | Ejemplos | Tratamiento |
 | --- | --- | --- |
-| Permanente / requiere corregir el archivo | `UNSUPPORTED_FILE_TYPE`, `FILE_REQUIRED`, `FILE_TOO_LARGE`, `BATCH_TOO_LARGE`, `INVALID_MULTIPART`, `INVALID_FILENAME`, `EMPTY_FILE`, `INVALID_METADATA`, `DUPLICATE_FILE`, `FILE_CORRUPTED`, `PASSWORD_PROTECTED`, `UNSUPPORTED_ENCODING`, `NO_EXTRACTABLE_TEXT`, `OCR_REQUIRED`, `DOCX_CORRUPTED`, `DOCX_ENCRYPTED`, `DOCX_EXTRACTION_FAILED` o `STORAGE_OBJECT_NOT_FOUND`. | No reintentar automáticamente. Mostrar la causa y una acción correctiva. El usuario puede subir una versión corregida como nuevo intento. |
+| Permanente / requiere corregir el archivo | `UNSUPPORTED_FILE_TYPE`, `FILE_REQUIRED`, `FILE_TOO_LARGE`, `BATCH_TOO_LARGE`, `INVALID_MULTIPART`, `INVALID_FILENAME`, `INVALID_IDEMPOTENCY_KEY`, `EMPTY_FILE`, `INVALID_METADATA`, `DUPLICATE_FILE`, `FILE_CORRUPTED`, `PASSWORD_PROTECTED`, `UNSUPPORTED_ENCODING`, `NO_EXTRACTABLE_TEXT`, `OCR_REQUIRED`, `DOCX_CORRUPTED`, `DOCX_ENCRYPTED`, `DOCX_EXTRACTION_FAILED` o `STORAGE_OBJECT_NOT_FOUND`. | No reintentar automáticamente. Mostrar la causa y una acción correctiva. El usuario puede subir una versión corregida como nuevo intento. |
 | Transitorio / posiblemente recuperable | `UPLOAD_FAILED`, `STORAGE_UNAVAILABLE`, `QUEUE_UNAVAILABLE`, `PROCESSING_TIMEOUT`, `SEARCH_ENGINE_UNAVAILABLE`; otros fallos de infraestructura claramente temporales. | Permitir hasta 3 reintentos adicionales (4 intentos totales), con backoff exponencial y variación aleatoria (jitter), manteniendo idempotencia. Angular reintenta transferencias y BullMQ jobs aceptados; agotados los intentos se registra el error y la cola avanza. |
 | Desconocido | Error no clasificado de extracción o indexación. | Registrar una referencia de soporte; no marcar como recuperable sin evidencia. Si el job es idempotente, ofrecer reintento manual individual después de revisar la causa. |
 
@@ -118,6 +118,10 @@ Concurrencia, tamaño máximo por archivo, tasa de entrada y capacidad de almace
 La búsqueda no extrae texto ni indexa sincrónicamente. Tampoco carga el documento completo en cada resultado ni ejecuta una consulta individual a PostgreSQL por cada hit. La latencia se mide con las métricas y condiciones descritas en esta decisión: p95 propuesto ≤ 400 ms en backend y p95 propuesto ≤ 1.000 ms percibido, pendiente de validación con el evaluador.
 
 El motor seleccionado es Elasticsearch por sus capacidades de texto completo, relevancia, filtros y resaltado. PostgreSQL Full-Text Search con GIN/`tsvector` tiene menor complejidad operativa y se considera una alternativa futura si las mediciones del volumen real justifican simplificar la arquitectura. El volumen máximo no se presupone; se determinará con pruebas de carga reproducibles. La comparación y los motivos están registrados en `docs/decisiones-tecnicas.md`.
+
+### Índice y reindexación
+
+La aplicación escribe y busca a través del alias `documents`; el índice concreto es `documents-v1`. El comando `pnpm --filter @docs/backend es:reindex` crea un índice nuevo, copia los documentos, recalcula el campo `metadata` desde autor/categoría/versión/tags y mueve el alias de forma atómica. El índice anterior se conserva para rollback manual. Ejecutar en una ventana de baja escritura: la copia no captura documentos escritos entre el snapshot y el cambio de alias. El mapeo compartido está en `backend/src/search/document-index.mapping.ts`.
 
 ## Comunicación SSE
 
@@ -246,12 +250,13 @@ El sistema aplica backpressure y límites configurables para tamaño por archivo
 
 | Tabla | Campos principales |
 | --- | --- |
-| `documents` | `id` UUID, `title`, `description`, `author`, `category`, `version`, `tags`, `original_filename`, `status`, `mime`, `size`, `checksum`, `bucket`, `object_key`, `normalized_text_key`, `error_code`, `error_message`, `created_at`, `updated_at`, `indexed_at` |
+| `documents` | `id` UUID, `title`, `description`, `author`, `category`, `version`, `tags`, `original_filename`, `idempotency_key`, `status`, `mime`, `size`, `checksum`, `bucket`, `object_key`, `normalized_text_key`, `error_code`, `error_message`, `created_at`, `updated_at`, `indexed_at` |
+| `outbox_events` | `id`, `document_id`, `status` (`PENDING`/`PUBLISHED`), `attempts`, `available_at`, `last_error`, `created_at`, `processed_at` |
 | `users` | `id`, `email` único, `password_hash`, `created_at`, `disabled_at` |
 | `api_keys` | `id`, `user_id`, `name`, `prefix`, `key_hash`, `last_used_at`, `expires_at`, `revoked_at` |
 | `sessions` (Redis) | `sid`, `user_id`, `created_at`, `last_seen_at`, TTL deslizante |
 
-`tags` se almacena como arreglo/JSON y se indexa como `keyword`; `version` es un string de metadatos, no un historial de versiones. `description` se indexa y se pondera junto con título y contenido. `original_filename` conserva el nombre saneado para mostrarlo y auditar; la clave de R2 usa el UUID y la extensión, no el nombre original.
+`tags` se almacena como arreglo/JSON y se indexa como `keyword`; `version` es un string de metadatos, no un historial de versiones. `description` se indexa y se pondera junto con título y contenido. `original_filename` conserva el nombre saneado para mostrarlo y auditar; la clave de R2 usa el UUID y la extensión, no el nombre original. `idempotency_key` es único por usuario y evita duplicados si se repite una carga tras perder la respuesta.
 
 ## Contratos de API propuestos
 
@@ -264,7 +269,7 @@ El sistema aplica backpressure y límites configurables para tamaño por archivo
 | `POST /api/api-keys` | Crear API key personal | Clave completa una sola vez, prefijo e identificador. |
 | `GET /api/api-keys` | Listar API keys | Prefijo, nombre, último uso y expiración; nunca la clave completa. |
 | `DELETE /api/api-keys/:id` | Revocar API key | Confirmación. |
-| `POST /api/documents` | Recibir un archivo y metadatos | `202 Accepted` con `trackingId` y estado inicial `PROCESSING`. |
+| `POST /api/documents` | Recibir un archivo y metadatos; admite `Idempotency-Key` | `202 Accepted` con `trackingId` y estado inicial `PROCESSING`. |
 | `POST /api/documents/batch` | Recibir varios archivos y un arreglo de metadatos alineado | `202 Accepted` con `total`, `accepted`, `failed` y resultados por archivo. |
 | `GET /api/documents/:id` | Consultar metadatos, estado y texto normalizado | Documento, estado y detalle de error opcional. |
 | `GET /api/documents/:id/content` | Obtener el original para el visor, con `Range` | Binario autorizado o redirección a URL firmada de corta duración. |
@@ -296,7 +301,7 @@ Los nombres de rutas son una propuesta para el diseño; se pueden ajustar al imp
 
 ## Decisiones pendientes
 
-- [ ] Elegir transactional outbox o definir formalmente el alcance del mecanismo de compensación/reconciliación para PostgreSQL y Redis.
+- [x] Implementar transactional outbox y reconciliador para PostgreSQL/Redis; el dispatcher tiene timeout y deja el evento pendiente si Redis no responde.
 - [ ] Configurar proxy/balanceador para streaming SSE y aplicar el contrato de evento y Pub/Sub compartido cuando existan varias instancias; la autenticación SSE ya está resuelta por cookie.
 - [ ] Definir formato del contenido normalizado y política de retención/versionado de originales y texto normalizado en Cloudflare R2.
 - [x] Alinear el estado inicial con HU-01: devolver `PROCESSING` en el `202` y exponer `trackingId` en la respuesta.
@@ -304,6 +309,8 @@ Los nombres de rutas son una propuesta para el diseño; se pueden ajustar al imp
 - [ ] Validar la fidelidad de `docx-preview` solo si se decide mantener DOCX como soporte opcional.
 - [ ] Si se añade edición DOCX, evaluar Tiptap + Import DOCX (Pro/cloud) frente a `docx-editor`, incluyendo coste, licencia y privacidad.
 - [ ] Definir la política de actualización de los componentes helm de Spartan NG y la estrategia de i18n (servicio propio o Transloco).
-- [ ] Definir base/máximo del backoff, timeout por trabajo, política de pausa y recuperación de trabajos atascados; el máximo de reintentos transitorios ya está fijado en 3 reintentos adicionales.
+- [x] Definir timeout de extracción/indexación y recuperación de trabajos atascados; el máximo de reintentos transitorios queda en 3 reintentos adicionales.
 - [ ] Definir el ámbito de deduplicación y la política cuando el contenido del archivo coincide pero sus metadatos/versiones difieren.
+- [x] Incluir autor, categoría, versión y etiquetas en la búsqueda de texto libre mediante el campo `metadata`.
+- [x] Implementar reindexación con alias (`pnpm --filter @docs/backend es:reindex`).
 - [ ] Validar con el evaluador el conjunto de documentos, carga y criterio p95 para medir búsqueda.

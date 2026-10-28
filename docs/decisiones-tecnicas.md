@@ -33,6 +33,7 @@ El backend devuelve un código estable, etapa, mensaje seguro, indicador `retrya
 | `UNSUPPORTED_FILE_TYPE` | Validación: extensión o tipo real distinto de TXT, PDF, Markdown o DOCX | “No se pudo procesar **{archivo}**: el formato no está admitido. Sube un archivo TXT, PDF, Markdown o DOCX.” |
 | `FILE_REQUIRED` | Validación: no se recibió ningún archivo | “No se recibió ningún archivo. Selecciona un documento e intenta de nuevo.” |
 | `INVALID_FILENAME` | Validación: nombre vacío, demasiado largo, con rutas, caracteres de control o nombre reservado | “No se pudo procesar **{archivo}**: el nombre del archivo no es válido. Renómbralo y vuelve a intentarlo.” |
+| `INVALID_IDEMPOTENCY_KEY` | Validación: `Idempotency-Key` con formato o longitud inválidos | “La clave de idempotencia no es válida. Usa entre 8 y 128 caracteres seguros.” |
 | `INVALID_MULTIPART` | Validación: cuerpo multipart mal formado o campo de archivo inesperado | “La solicitud de carga no es válida. Revisa el archivo y los campos enviados.” |
 | `FILE_TOO_LARGE` | Validación: supera el límite configurado por archivo | “No se pudo procesar **{archivo}**: supera el tamaño máximo permitido de {límite}.” |
 | `BATCH_TOO_LARGE` | Validación: el lote supera la cantidad de archivos o el tamaño total configurado | “No se pudo iniciar el lote: supera el límite de archivos o de tamaño total.” |
@@ -260,9 +261,11 @@ No se debe confirmar `PROCESSING` si el archivo o la tarea no quedaron guardados
 - [ ] Evaluar persistencia/reanudación de la cola del frontend si pasa a ser requisito; no está incluida en la primera versión.
 - [ ] Acordar si se impone una pausa o límite de tasa cuando el backend acumule demasiadas tareas pendientes.
 - [ ] Definir política de retención/versionado y respaldo de originales y texto normalizado en Cloudflare R2.
-- [ ] Definir base y máximo del backoff, timeout por trabajo, política de pausa y recuperación de trabajos atascados; ya se fijó el máximo en 3 reintentos adicionales para fallos transitorios.
+- [x] Definir timeout por trabajo y recuperación de trabajos atascados; se implementó `PROCESSING_TIMEOUT` y reconciliador, con 3 reintentos adicionales.
 - [ ] Definir ámbito de unicidad de `DUPLICATE_FILE` (por ejemplo, hash SHA-256 dentro de una organización) y si se permite importar el mismo contenido con metadatos/versiones diferentes.
-- [ ] Definir si la coordinación PostgreSQL-Redis requiere patrón outbox para el entorno de despliegue previsto.
+- [x] Adoptar outbox transaccional en PostgreSQL para coordinar la publicación en Redis.
+- [x] Implementar idempotencia de carga con `Idempotency-Key` por usuario.
+- [x] Implementar búsqueda de metadatos en texto libre y reindexación con alias.
 - [ ] Medir ingestión e indexación con una muestra representativa; registrar resultados y entorno.
 - [ ] Definir el modo de registro (abierto, por invitación o por bandera), la verificación de email y la recuperación de contraseña.
 - [ ] Definir alcance y expiración de las API keys (lectura/escritura, por usuario, revocación).
@@ -307,6 +310,10 @@ No se debe confirmar `PROCESSING` si el archivo o la tarea no quedaron guardados
 | 2026-10-27 | Aceptar TXT UTF-8, Markdown UTF-8 y PDF con texto extraíble; no incluir OCR en el alcance inicial | Superada por la decisión DOCX del 2026-10-28 | Mantiene el procesamiento acotado para la kata. Un PDF sin texto útil se marca `ERROR` con causa y no bloquea la cola. |
 | 2026-10-27 | Persistir `RECEIVED`, `PROCESSING`, `INDEXED` y `ERROR`; mantener `PENDIENTE`/`SUBIENDO` en frontend | Adoptada; `PROCESSING` es el inicial desde el 2026-10-28 | Distingue recepción durable, procesamiento y estados terminales; Angular presenta etiquetas traducidas. |
 | 2026-10-28 | Crear los documentos en `PROCESSING` y devolver `trackingId` en el `202` | Adoptada | Alinea la respuesta con HU-01: el cliente recibe un identificador de seguimiento inmediato y no espera la indexación; `RECEIVED` se conserva por compatibilidad. |
+| 2026-10-28 | Usar outbox transaccional y reconciliador para publicar trabajos en Redis | Adoptada | Evita documentos atascados si Redis cae entre la creación del registro y el encolado; el dispatcher tiene timeout y el reconciliador reencola pendientes y documentos `PROCESSING` antiguos. |
+| 2026-10-28 | Aceptar `Idempotency-Key` por carga individual con unicidad por usuario | Adoptada | Un reintento tras perder la respuesta devuelve el mismo documento en lugar de duplicarlo. |
+| 2026-10-28 | Aplicar timeout a extracción/indexación y reutilizar `normalized.txt` en reintentos | Adoptada | Evita jobs colgados y reduce trabajo repetido; el timeout es retryable y termina en `ERROR` solo al agotar intentos. |
+| 2026-10-28 | Buscar metadatos en texto libre mediante el campo `metadata` y reindexar con alias | Adoptada | Cubre autor/categoría/versión/tags sin cambiar los filtros exactos; el alias permite reconstruir el índice sin downtime. |
 | 2026-10-27 | Aislar errores por archivo y continuar automáticamente la cola | Adoptada | Un archivo fallido no impide la carga de los siguientes; se muestra la causa y se ofrece reintento individual cuando aplique. |
 | 2026-10-27 | Tratar un lote como operación de UI con una solicitud individual por archivo | Adoptada | Angular mantiene una sola cola secuencial; NestJS/BullMQ ejecutan y reportan cada documento independientemente. |
 | 2026-10-27 | Reintentar errores transitorios hasta 3 veces adicionales con backoff exponencial y jitter | Adoptada | Equivale a un máximo de 4 intentos totales; validación y fallos permanentes de lectura no se reintentan automáticamente. |

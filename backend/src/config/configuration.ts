@@ -41,5 +41,8 @@ export default () => {
       maxTextChars: Number(process.env.MAX_TEXT_CHARS ?? 2_000_000),
       timeoutMs: Number(process.env.PROCESSING_TIMEOUT_MS ?? 60_000),
     },
+    queue: {
+      operationTimeoutMs: Number(process.env.QUEUE_OPERATION_TIMEOUT_MS ?? 2_000),
+    },
   };
 };

@@ -61,7 +61,8 @@ cp .env.example .env
 | `DIRECT_URL` | Sí | Neon **directo** para migraciones |
 | `REDIS_URL` | Sí | Redis local o `rediss://` para un proveedor TLS |
 | `ELASTICSEARCH_NODE` | Sí | `http://localhost:9200` o URL de Elastic Cloud |
-| `ELASTICSEARCH_INDEX` | No | Índice; por defecto `documents-v1` |
+| `ELASTICSEARCH_INDEX` | No | Alias de búsqueda; por defecto `documents` |
+| `ELASTICSEARCH_INDEX_VERSION` | No | Versión del índice concreto (`documents-v1`); por defecto `v1` |
 | `ELASTICSEARCH_API_KEY` | No | Solo si el clúster usa API key |
 | `SESSION_SECRET` | Sí | Secreto de sesión/CSRF; mínimo 16 caracteres, recomendado 48 bytes |
 | `SESSION_TTL_SECONDS` | No | TTL de sesión; por defecto `604800` |
@@ -76,6 +77,12 @@ cp .env.example .env
 | `MAX_BATCH_FILES` | No | Límite por lote; por defecto `20` |
 | `MAX_BATCH_TOTAL_MB` | No | Tamaño total del lote; por defecto `100` |
 | `WORKER_CONCURRENCY` | No | Concurrencia del worker; por defecto `2` |
+| `QUEUE_OPERATION_TIMEOUT_MS` | No | Timeout de operaciones BullMQ; por defecto `2000` |
+| `OUTBOX_RECONCILE_INTERVAL_MS` | No | Frecuencia del reconciliador; por defecto `15000` |
+| `OUTBOX_STUCK_AFTER_MS` | No | Antigüedad para considerar un documento atascado; por defecto `120000` |
+| `OUTBOX_MAX_ATTEMPTS` | No | Intentos de publicación del outbox; por defecto `10` |
+| `MAX_TEXT_CHARS` | No | Máximo de caracteres indexados; por defecto `2000000` |
+| `PROCESSING_TIMEOUT_MS` | No | Timeout de extracción/indexación; por defecto `60000` |
 | `SEED_USER_EMAIL` / `SEED_USER_PASSWORD` | No | Usuario de demostración |
 
 ### ¿Un solo `.env` para frontend y backend?
@@ -322,7 +329,13 @@ pnpm build
 pnpm test
 ```
 
-Incluye pruebas unitarias del extractor (TXT, Markdown, BOM, formatos no admitidos, archivo vacío), del worker (idempotencia, retry transitorio, error terminal y camino exitoso) y del nombre de archivo (rutas, reservados, caracteres especiales, longitud). Las pruebas e2e de navegador, la búsqueda dentro de PDF y el benchmark de latencia quedan pendientes.
+Incluye pruebas unitarias del extractor (TXT, Markdown, BOM, formatos no admitidos, archivo vacío, límite de caracteres), del worker (idempotencia, retry transitorio, timeout, error terminal y camino exitoso) y del nombre de archivo. Incluye además un smoke test de integración del pipeline completo:
+
+```bash
+pnpm --filter @docs/backend e2e:pipeline
+```
+
+Ese test inicia sesión, sube un TXT con `Idempotency-Key`, verifica que la respuesta sea `202 PROCESSING`, comprueba la idempotencia, espera `INDEXED` y busca el documento. Las pruebas e2e de navegador, la búsqueda dentro de PDF y el benchmark de latencia quedan pendientes.
 
 ## 9. API principal
 
@@ -360,6 +373,14 @@ curl -X POST http://localhost:4200/api/documents \
 
 Respuesta: `202 Accepted` con `trackingId`, estado inicial `PROCESSING` y `contentUrl`. La extracción/indexación continúa en segundo plano.
 
+Para reintentos seguros, envía un encabezado `Idempotency-Key` único por archivo:
+
+```bash
+-H "Idempotency-Key: $(uuidgen)"
+```
+
+La misma clave devuelve el mismo documento en lugar de crear un duplicado.
+
 ### Carga múltiple
 
 ```bash
@@ -388,16 +409,26 @@ Límites: 20 archivos, 25 MB por archivo y 100 MB totales por defecto. Angular *
 
 ## 10. Flujo de carga
 
-1. Angular envía un archivo a la vez por lote con `multipart/form-data`.
-2. NestJS valida formato/tamaño, calcula SHA-256, sube el original a R2 y crea el registro `PROCESSING`; la respuesta `202` incluye `trackingId`.
-3. Se encola un trabajo BullMQ con el `documentId`.
-4. El worker extrae texto (`pdf-parse` o UTF-8; `mammoth` solo si se habilita DOCX opcional), guarda `normalized.txt` en R2 y lo indexa en Elasticsearch.
+1. Angular envía un archivo a la vez por lote con `multipart/form-data` e `Idempotency-Key`.
+2. NestJS valida formato/tamaño, calcula SHA-256, sube el original a R2 y crea el documento `PROCESSING` + un evento outbox en la misma transacción.
+3. El outbox publica el trabajo en BullMQ. Si Redis falla, el evento queda pendiente y el reconciliador lo reintenta; la respuesta inicial sigue siendo `202`.
+4. El worker extrae el texto (o reutiliza `normalized.txt` en reintentos), lo guarda en R2 y lo indexa en Elasticsearch.
 5. El estado pasa a `INDEXED` o `ERROR` y se publica por SSE.
 6. Angular actualiza la cola del lote y permite reintentar errores transitorios.
 
 ## 11. Búsqueda
 
-`GET /api/search` usa `multi_match` sobre título, descripción y contenido, con filtros por categoría/etiquetas/autor, paginación de 20 y `highlight` de Elasticsearch. No se usa `LIKE` ni recorridos de tabla para contenido.
+`GET /api/search` usa `multi_match` sobre título, descripción, contenido y un campo `metadata` que agrupa autor, categoría, versión y etiquetas. Además permite filtros por categoría/etiquetas/autor, paginación de 20 y `highlight` de Elasticsearch. No se usa `LIKE` ni recorridos de tabla para contenido.
+
+### Reindexación con alias
+
+El servicio escribe y busca a través del alias `documents`; el índice concreto es `documents-v1`. Para reconstruir el índice con el mapeo actual:
+
+```bash
+pnpm --filter @docs/backend es:reindex
+```
+
+El comando crea un índice nuevo, reindexa los documentos, recalcula el campo `metadata` y cambia el alias de forma atómica. El índice anterior queda disponible para rollback manual. Ejecútalo en una ventana de baja escritura: un documento indexado entre la copia y el cambio de alias debe reindexarse de nuevo.
 
 ## 12. Diagnóstico rápido
 
@@ -416,9 +447,11 @@ Límites: 20 archivos, 25 MB por archivo y 100 MB totales por defecto. Angular *
 ## 13. Limitaciones actuales
 
 - El visor PDF usa PDF.js con navegación por páginas y zoom; la búsqueda dentro del PDF y el renderizado continuo quedan pendientes.
+- `MAX_TEXT_CHARS` limita el texto indexado a 2.000.000 de caracteres por defecto; el excedente se recorta y no se indexa.
+- La idempotencia de subida está implementada en la carga individual; el endpoint batch no acepta una clave por archivo.
 - DOCX no es un requisito de la v1. El visor `docx-preview` y la extracción con `mammoth` existen como soporte opcional/experimental y no se incluyen en la aceptación.
 - Spartan NG está declarado y Tailwind 4 está configurado, pero los componentes helm todavía deben añadirse con su CLI. La UI actual usa Tailwind y HTML accesible.
-- No hay pruebas e2e de navegador ni medición formal de latencia todavía.
+- Hay un smoke test de integración del pipeline (`e2e:pipeline`), pero no pruebas e2e de navegador ni medición formal de latencia.
 - La autenticación es mínima: cookie HttpOnly, CSRF y API keys; sin roles ni permisos diferenciados.
 - El resumen de búsqueda no promete enlace profundo a la página del PDF; el resaltado obligatorio está en los fragmentos de resultados.
 - Si usas URLs firmadas directas de R2, falta configurar CORS y `Range` en el bucket.

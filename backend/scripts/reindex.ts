@@ -46,23 +46,21 @@ async function main(): Promise<void> {
   });
 
   const result = await client.reindex({
-    source: {
-      index: currentIndex,
-      script: {
-        lang: 'painless',
-        source: `
-          String metadata = '';
-          if (ctx._source.author != null) { metadata += ctx._source.author + ' '; }
-          if (ctx._source.category != null) { metadata += ctx._source.category + ' '; }
-          if (ctx._source.version != null) { metadata += ctx._source.version + ' '; }
-          if (ctx._source.tags != null) {
-            for (def tag : ctx._source.tags) { metadata += tag + ' '; }
-          }
-          ctx._source.metadata = metadata.trim();
-        `,
-      },
-    },
+    source: { index: currentIndex },
     dest: { index: nextIndex },
+    script: {
+      lang: 'painless',
+      source: `
+        String metadata = '';
+        if (ctx._source.author != null) { metadata += ctx._source.author + ' '; }
+        if (ctx._source.category != null) { metadata += ctx._source.category + ' '; }
+        if (ctx._source.version != null) { metadata += ctx._source.version + ' '; }
+        if (ctx._source.tags != null) {
+          for (def tag : ctx._source.tags) { metadata += tag + ' '; }
+        }
+        ctx._source.metadata = metadata.trim();
+      `,
+    },
     wait_for_completion: true,
     refresh: true,
   });
