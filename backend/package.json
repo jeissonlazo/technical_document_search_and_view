@@ -11,6 +11,8 @@
     "test": "jest",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "dotenv -e ../.env -- prisma migrate dev",
+    "db:check": "dotenv -e ../.env -- node scripts/check-db.cjs",
+    "r2:check": "dotenv -e ../.env -- node scripts/check-r2.cjs",
     "seed": "dotenv -e ../.env -- tsx prisma/seed.ts"
   },
   "prisma": {

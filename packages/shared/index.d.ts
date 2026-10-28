@@ -73,6 +73,27 @@ export interface ApiErrorBody {
   supportRef?: string;
 }
 
+export interface BatchUploadError {
+  code: string;
+  message: string;
+  retryable: boolean;
+}
+
+export interface BatchUploadItemResult {
+  index: number;
+  filename: string;
+  status: 'accepted' | 'failed';
+  document?: DocumentMetadata;
+  error?: BatchUploadError;
+}
+
+export interface BatchUploadResponse {
+  total: number;
+  accepted: number;
+  failed: number;
+  results: BatchUploadItemResult[];
+}
+
 export interface DocumentStatusEvent {
   type: 'document.status';
   documentId: string;

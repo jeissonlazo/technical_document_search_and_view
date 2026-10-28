@@ -1,8 +1,19 @@
 name: technical-docs
 
+x-backend: &backend
+  image: technical-docs-backend
+  build:
+    context: .
+    dockerfile: backend/Dockerfile
+  env_file:
+    - .env
+  init: true
+
 services:
+  # Opcional para desarrollo sin Neon.
   postgres:
     image: postgres:16-alpine
+    profiles: ["local-db"]
     environment:
       POSTGRES_USER: docs
       POSTGRES_PASSWORD: docs
@@ -47,55 +58,88 @@ services:
       retries: 30
       start_period: 60s
 
+  # Migra la base Neon (o Postgres local) antes de arrancar API/worker.
+  migrate:
+    <<: *backend
+    command:
+      [
+        "./node_modules/.bin/prisma",
+        "migrate",
+        "deploy",
+        "--schema",
+        "prisma/schema.prisma"
+      ]
+    restart: "no"
+
   api:
-    build:
-      context: .
-      dockerfile: backend/Dockerfile
-    env_file:
-      - .env
+    <<: *backend
     environment:
       NODE_ENV: production
-      DATABASE_URL: postgresql://docs:docs@postgres:5432/docs?schema=public
       REDIS_URL: redis://redis:6379
       ELASTICSEARCH_NODE: http://elasticsearch:9200
     ports:
       - "3000:3000"
     depends_on:
-      postgres:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
       elasticsearch:
         condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
 
   worker:
-    build:
-      context: .
-      dockerfile: backend/Dockerfile
+    <<: *backend
     command: ["node", "dist/worker.js"]
-    env_file:
-      - .env
     environment:
       NODE_ENV: production
-      DATABASE_URL: postgresql://docs:docs@postgres:5432/docs?schema=public
       REDIS_URL: redis://redis:6379
       ELASTICSEARCH_NODE: http://elasticsearch:9200
     depends_on:
-      postgres:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
       elasticsearch:
         condition: service_healthy
 
   frontend:
+    image: technical-docs-frontend
     build:
       context: .
       dockerfile: frontend/Dockerfile
     ports:
       - "4200:80"
     depends_on:
-      - api
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost/ >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  # Uso puntual: docker compose --profile seed run --rm seed
+  seed:
+    <<: *backend
+    profiles: ["seed"]
+    command: ["./node_modules/.bin/tsx", "prisma/seed.ts"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: "no"
 
 volumes:
   postgres_data:

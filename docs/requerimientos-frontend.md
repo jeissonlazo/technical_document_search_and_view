@@ -142,6 +142,8 @@ La aplicación será privada, tendrá interfaz en español e inglés, ofrecerá 
 
 **FE-023.** La interfaz no deberá esperar a que termine la indexación de un documento para iniciar la transferencia del siguiente.
 
+La API puede exponer `POST /api/documents/batch` para clientes externos, pero Angular mantiene la regla de una solicitud por archivo y subida secuencial; no usa el endpoint batch.
+
 **FE-024.** El sistema deberá mostrar el estado individual de cada documento:
 
 - `RECEIVED`

@@ -16,6 +16,7 @@ import { QueueService } from './queue.service';
             username: redisUrl.username || undefined,
             password: redisUrl.password || undefined,
             db: redisUrl.pathname.length > 1 ? Number(redisUrl.pathname.slice(1)) : 0,
+            ...(redisUrl.protocol === 'rediss:' ? { tls: {} } : {}),
           },
           defaultJobOptions: {
             removeOnComplete: 100,

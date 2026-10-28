@@ -113,6 +113,7 @@ export class ExtractionService {
 
 function normalize(text: string): string {
   return text
+    .replace(/^\uFEFF/, '')
     .replace(/\u0000/g, '')
     .replace(/\r\n?/g, '\n')
     .replace(/[ \t]+\n/g, '\n')

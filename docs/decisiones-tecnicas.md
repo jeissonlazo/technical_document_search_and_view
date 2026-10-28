@@ -31,6 +31,7 @@ El backend devuelve un código estable, etapa, mensaje seguro, indicador `retrya
 | --- | --- | --- |
 | `UNSUPPORTED_FILE_TYPE` | Validación: extensión o tipo real distinto de TXT, PDF, Markdown o DOCX | “No se pudo procesar **{archivo}**: el formato no está admitido. Sube un archivo TXT, PDF, Markdown o DOCX.” |
 | `FILE_TOO_LARGE` | Validación: supera el límite configurado por archivo | “No se pudo procesar **{archivo}**: supera el tamaño máximo permitido de {límite}.” |
+| `BATCH_TOO_LARGE` | Validación: el lote supera la cantidad de archivos o el tamaño total configurado | “No se pudo iniciar el lote: supera el límite de archivos o de tamaño total.” |
 | `EMPTY_FILE` | Validación: archivo sin contenido | “No se pudo procesar **{archivo}**: el archivo está vacío.” |
 | `INVALID_METADATA` | Validación: faltan campos o metadatos no válidos | “No se pudo procesar **{archivo}**: revisa los metadatos obligatorios e inténtalo de nuevo.” |
 | `DUPLICATE_FILE` | Validación: se detectó un documento duplicado según la política configurada | “No se pudo agregar **{archivo}**: ya existe un documento con el mismo contenido.” |
@@ -61,7 +62,8 @@ La subida sigue siendo secuencial hasta que cada archivo obtiene respuesta del b
 
 ### Lotes, resumen, reintentos y simultaneidad
 
-- El usuario puede seleccionar muchos archivos e iniciar una sola operación de carga múltiple desde la interfaz. Angular conserva la cola del lote y envía cada archivo con una solicitud individual; espera la respuesta del backend antes de comenzar la siguiente subida. No se envía un único cuerpo multipart con todo el lote.
+- El usuario puede seleccionar muchos archivos e iniciar una sola operación de carga múltiple desde la interfaz. Angular conserva la cola del lote y envía cada archivo con una solicitud individual; espera la respuesta del backend antes de comenzar la siguiente subida. No se envía un único cuerpo multipart con todo el lote desde Angular.
+- La API ofrece `POST /api/documents/batch` para clientes externos: recibe `files[]` y `metadata` como arreglo JSON alineado, crea documentos y trabajos independientes y devuelve resultados parciales. Angular no lo usa; mantiene la subida secuencial por archivo.
 - NestJS crea un trabajo BullMQ por cada documento aceptado. La validación, extracción e indexación de un documento se aíslan de las de los demás.
 - La interfaz muestra estado y error por archivo. El resumen final informa cantidad indexada, fallida y aún procesándose, además del nombre, causa concreta y disponibilidad de reintento. El lote solo se declara terminado cuando cada elemento está en un estado terminal (`INDEXED` o `ERROR`) o cuando un archivo no aceptado quedó registrado como fallo local.
 - Un archivo no aceptado por error de validación o transferencia no impide que Angular intente la subida siguiente. Un trabajo fallido de BullMQ tampoco debe impedir que el worker tome otros trabajos listos.
@@ -324,3 +326,4 @@ No se debe confirmar `RECEIVED` si el archivo o la tarea no quedaron guardados d
 | 2026-10-28 | Descartar Tiptap para el visor DOCX de la v1; mantener `docx-preview` | Adoptada | Tiptap no tiene soporte Angular oficial (solo `ngx-tiptap`, comunitario) y su importación DOCX es Pro/comercial, beta y con conversión en la nube; para solo lectura, `docx-preview` es más simple y preserva mejor el layout. |
 | 2026-10-28 | El resaltado obligatorio es en los fragmentos de resultados; el resaltado dentro del visor DOCX es opcional y sin página exacta | Adoptada | HU-02/FE-005 piden highlights en los resultados; DOCX no tiene páginas estables en el archivo. Si se requiere deep-link, se usa una vista de texto extraído con `<mark>`. |
 | 2026-10-28 | Usar Cloudflare R2 como almacenamiento principal de originales y texto normalizado, en bucket privado y con URLs firmadas | Adoptada | Separa binarios de PostgreSQL/Redis, permite acceso compartido entre API y workers y evita discos locales; MinIO queda solo para tests offline. |
+| 2026-10-28 | Añadir `POST /api/documents/batch` para clientes API, manteniendo la subida secuencial de Angular | Adoptada | El endpoint recibe archivos y metadatos alineados, crea documentos/jobs independientes y devuelve resultados parciales; Angular sigue usando una solicitud por archivo. |

@@ -81,13 +81,15 @@ flowchart LR
 
 Angular permite seleccionar varios archivos e iniciar una sola carga múltiple desde la interfaz. El frontend conserva una cola con el progreso por archivo, pero hace una solicitud `POST /api/documents` por cada documento y espera la respuesta antes de subir el siguiente. Así se mantiene la subida secuencial acordada sin convertir el lote entero en una única transacción HTTP.
 
+La API expone además `POST /api/documents/batch` para clientes que no usan Angular: recibe `files[]` y un campo `metadata` con un arreglo JSON alineado por índice, crea un documento y un trabajo independiente por archivo, y devuelve `202 Accepted` con resultados parciales. Angular no usa este endpoint; conserva la subida secuencial uno por uno. El batch tiene límites de cantidad, tamaño por archivo y tamaño total para proteger la memoria del proceso.
+
 Cada documento aceptado crea un trabajo BullMQ independiente, identificado con el ID estable del documento. Un error en validación, transferencia o procesamiento queda asociado a ese elemento. Angular registra el fallo y continúa con el siguiente archivo; un job fallido o en backoff no debe detener otros jobs listos. Pueden coexistir varios lotes o usuarios. El límite de subida es uno por lote desde Angular; la concurrencia de workers es independiente y configurable.
 
 ### Clasificación y política de recuperación
 
 | Clase | Ejemplos | Tratamiento |
 | --- | --- | --- |
-| Permanente / requiere corregir el archivo | `UNSUPPORTED_FILE_TYPE`, `FILE_TOO_LARGE`, `EMPTY_FILE`, `INVALID_METADATA`, `DUPLICATE_FILE`, `FILE_CORRUPTED`, `PASSWORD_PROTECTED`, `UNSUPPORTED_ENCODING`, `NO_EXTRACTABLE_TEXT`, `OCR_REQUIRED`, `DOCX_CORRUPTED`, `DOCX_ENCRYPTED`, `DOCX_EXTRACTION_FAILED` o `STORAGE_OBJECT_NOT_FOUND`. | No reintentar automáticamente. Mostrar la causa y una acción correctiva. El usuario puede subir una versión corregida como nuevo intento. |
+| Permanente / requiere corregir el archivo | `UNSUPPORTED_FILE_TYPE`, `FILE_TOO_LARGE`, `BATCH_TOO_LARGE`, `EMPTY_FILE`, `INVALID_METADATA`, `DUPLICATE_FILE`, `FILE_CORRUPTED`, `PASSWORD_PROTECTED`, `UNSUPPORTED_ENCODING`, `NO_EXTRACTABLE_TEXT`, `OCR_REQUIRED`, `DOCX_CORRUPTED`, `DOCX_ENCRYPTED`, `DOCX_EXTRACTION_FAILED` o `STORAGE_OBJECT_NOT_FOUND`. | No reintentar automáticamente. Mostrar la causa y una acción correctiva. El usuario puede subir una versión corregida como nuevo intento. |
 | Transitorio / posiblemente recuperable | `UPLOAD_FAILED`, `STORAGE_UNAVAILABLE`, `QUEUE_UNAVAILABLE`, `PROCESSING_TIMEOUT`, `SEARCH_ENGINE_UNAVAILABLE`; otros fallos de infraestructura claramente temporales. | Permitir hasta 3 reintentos adicionales (4 intentos totales), con backoff exponencial y variación aleatoria (jitter), manteniendo idempotencia. Angular reintenta transferencias y BullMQ jobs aceptados; agotados los intentos se registra el error y la cola avanza. |
 | Desconocido | Error no clasificado de extracción o indexación. | Registrar una referencia de soporte; no marcar como recuperable sin evidencia. Si el job es idempotente, ofrecer reintento manual individual después de revisar la causa. |
 
@@ -135,7 +137,7 @@ El motor seleccionado es Elasticsearch por sus capacidades de texto completo, re
 - **SSE:** `GET /api/events` usa la cookie de sesión; `EventSource` con `withCredentials` solo si es cross-origin. No se ponen tokens en la URL.
 - **Autorización:** en la primera versión no hay roles ni RBAC; todo usuario autenticado puede cargar, buscar y visualizar. Si se añade propiedad/tenant, el filtro se aplica en la consulta a Elasticsearch y en PostgreSQL, no en el cliente.
 - **Fuerza bruta y abuso:** rate limit en login/registro, bloqueo temporal y registro de auditoría; verificación de email y recuperación de contraseña quedan fuera del alcance inicial.
-- **Secretos:** `DATABASE_URL`, `REDIS_URL`, `ELASTICSEARCH_URL`, `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET`, `R2_ENDPOINT`, `SESSION_SECRET` y parámetros de Argon2 solo en variables de entorno; nunca en el repositorio.
+- **Secretos:** `DATABASE_URL`, `DIRECT_URL`, `REDIS_URL`, `ELASTICSEARCH_NODE`, `ELASTICSEARCH_API_KEY`, `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET`, `R2_ENDPOINT`, `SESSION_SECRET` y parámetros de Argon2 solo en variables de entorno; nunca en el repositorio.
 
 ## Visor de documentos
 
@@ -263,6 +265,7 @@ El sistema aplica backpressure y límites configurables para tamaño por archivo
 | `GET /api/api-keys` | Listar API keys | Prefijo, nombre, último uso y expiración; nunca la clave completa. |
 | `DELETE /api/api-keys/:id` | Revocar API key | Confirmación. |
 | `POST /api/documents` | Recibir un archivo y metadatos | `202 Accepted`, `documentId`, estado inicial `RECEIVED` (o `PROCESSING` si se alinea con HU-01). |
+| `POST /api/documents/batch` | Recibir varios archivos y un arreglo de metadatos alineado | `202 Accepted` con `total`, `accepted`, `failed` y resultados por archivo. |
 | `GET /api/documents/:id` | Consultar metadatos, estado y texto normalizado | Documento, estado y detalle de error opcional. |
 | `GET /api/documents/:id/content` | Obtener el original para el visor, con `Range` | Binario autorizado o redirección a URL firmada de corta duración. |
 | `GET /api/search` | Buscar texto completo con filtros, orden y paginación | Hits, total, facetas y fragmentos resaltados. |

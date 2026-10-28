@@ -69,7 +69,9 @@ La validación se realizó en dos niveles:
    - el alcance de DOCX y la conveniencia de `docx-preview` frente a un editor WYSIWYG;
    - la compatibilidad de Spartan NG con Angular 22 y el riesgo del CLI.
 
-**Pendiente de validación humana:** ejecutar `pnpm install`, `pnpm build`, migraciones y pruebas en una máquina sin las restricciones de este sandbox; revisar el código generado, completar los componentes Spartan helm y ajustar los TODOs. La IA no ejecutó el build en este entorno.
+**Validación ejecutada:** `pnpm install`, `prisma generate`, `prisma migrate dev`, seed, build de NestJS, build de Angular y pruebas unitarias (5/5). El stack Docker se levantó con `docker compose up --build -d`; API healthy, frontend servido por nginx, login/sesión y SSE verificados. R2 quedó operativo en `katabuscador` y se probó el flujo completo con TXT, DOCX y PDF, además de `POST /api/documents/batch` con un archivo aceptado y uno rechazado sin afectar al primero.
+
+**Pendiente de validación humana:** rotar el token de Cloudflare compartido en el chat, crear un R2 API token dedicado para producción, configurar CORS si se usan URLs firmadas directas y completar pruebas e2e de navegador/medición de latencia.
 
 ## 5. Limitaciones y riesgos
 

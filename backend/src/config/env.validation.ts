@@ -5,9 +5,11 @@ const envSchema = z.object({
   PORT: z.coerce.number().default(3000),
   FRONTEND_ORIGIN: z.string().default('http://localhost:4200'),
   DATABASE_URL: z.string().min(1, 'DATABASE_URL es obligatoria'),
+  DIRECT_URL: z.string().optional().default(''),
   REDIS_URL: z.string().default('redis://localhost:6379'),
   ELASTICSEARCH_NODE: z.string().default('http://localhost:9200'),
   ELASTICSEARCH_INDEX: z.string().default('documents-v1'),
+  ELASTICSEARCH_API_KEY: z.string().optional().default(''),
   SESSION_SECRET: z.string().min(16).default('dev-only-change-me-please'),
   SESSION_TTL_SECONDS: z.coerce.number().default(604800),
   R2_ACCOUNT_ID: z.string().optional().default(''),
@@ -19,6 +21,7 @@ const envSchema = z.object({
   R2_SIGNED_URL_TTL_SECONDS: z.coerce.number().default(300),
   MAX_FILE_SIZE_MB: z.coerce.number().default(25),
   MAX_BATCH_FILES: z.coerce.number().default(20),
+  MAX_BATCH_TOTAL_MB: z.coerce.number().default(100),
   WORKER_CONCURRENCY: z.coerce.number().default(2),
 });
 

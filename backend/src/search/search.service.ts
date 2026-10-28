@@ -33,7 +33,11 @@ export class SearchService implements OnModuleInit {
 
   constructor(config: ConfigService) {
     this.index = config.getOrThrow<string>('elasticsearchIndex');
-    this.client = new Client({ node: config.getOrThrow<string>('elasticsearchNode') });
+    const apiKey = config.get<string>('elasticsearchApiKey') ?? '';
+    this.client = new Client({
+      node: config.getOrThrow<string>('elasticsearchNode'),
+      ...(apiKey ? { auth: { apiKey } } : {}),
+    });
   }
 
   async onModuleInit(): Promise<void> {
@@ -76,6 +80,13 @@ export class SearchService implements OnModuleInit {
           createdAt: { type: 'date' },
         },
       },
+    }).catch((error: unknown) => {
+      const name = (error as { name?: string }).name;
+      const message = error instanceof Error ? error.message : '';
+      if (name === 'resource_already_exists_exception' || message.includes('resource_already_exists_exception')) {
+        return;
+      }
+      throw error;
     });
   }
 

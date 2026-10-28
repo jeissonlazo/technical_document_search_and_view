@@ -4,6 +4,8 @@ RUN apk add --no-cache python3 make g++ openssl
 WORKDIR /app
 
 ENV PRISMA_SKIP_POSTINSTALL_GENERATE=true
+ENV DATABASE_URL=postgresql://placeholder:placeholder@localhost:5432/placeholder
+ENV DIRECT_URL=postgresql://placeholder:placeholder@localhost:5432/placeholder
 COPY pnpm-workspace.yaml package.json ./
 COPY packages/shared/package.json packages/shared/
 COPY backend/package.json backend/

@@ -13,6 +13,11 @@ describe('ExtractionService', () => {
     expect(text).toContain('# Título');
   });
 
+  it('quita el BOM UTF-8 al inicio', async () => {
+    const text = await service.extract(Buffer.from('\uFEFFHola'), 'text/plain', 'bom.txt');
+    expect(text).toBe('Hola');
+  });
+
   it('rechaza un formato no admitido', async () => {
     await expect(
       service.extract(Buffer.from('binario'), 'application/octet-stream', 'archivo.bin'),

@@ -4,7 +4,13 @@ import { createHash, randomUUID } from 'crypto';
 import { extname } from 'path';
 import type { Readable } from 'stream';
 import type { Document as PrismaDocument } from '@prisma/client';
-import type { DocumentMetadata } from '@docs/shared';
+import type {
+  BatchUploadItemResult,
+  BatchUploadResponse,
+  DocumentMetadata,
+} from '@docs/shared';
+import { plainToInstance } from 'class-transformer';
+import { validate } from 'class-validator';
 import { AppError } from '../common/app-error';
 import { PrismaService } from '../prisma/prisma.service';
 import { QueueService } from '../queue/queue.service';
@@ -108,6 +114,95 @@ export class DocumentsService {
     return toMetadata(document);
   }
 
+  async createBatch(
+    userId: string,
+    files: Express.Multer.File[] | undefined,
+    metadataJson: string | undefined,
+  ): Promise<BatchUploadResponse> {
+    const batchFiles = files ?? [];
+    if (batchFiles.length === 0) {
+      throw new AppError('EMPTY_FILE', 'No se recibió ningún archivo en el lote.', 422, false);
+    }
+
+    const maxFiles = this.config.getOrThrow<number>('limits.maxBatchFiles');
+    if (batchFiles.length > maxFiles) {
+      throw new AppError(
+        'BATCH_TOO_LARGE',
+        `El lote supera el máximo de ${maxFiles} archivos.`,
+        413,
+        false,
+        { maxFiles },
+      );
+    }
+
+    const totalBytes = batchFiles.reduce((sum, file) => sum + file.size, 0);
+    const maxTotalBytes = this.config.getOrThrow<number>('limits.maxBatchTotalBytes');
+    if (totalBytes > maxTotalBytes) {
+      throw new AppError(
+        'BATCH_TOO_LARGE',
+        `El lote supera el tamaño total permitido de ${Math.round(maxTotalBytes / 1024 / 1024)} MB.`,
+        413,
+        false,
+        { maxTotalBytes },
+      );
+    }
+
+    const metadata = parseBatchMetadata(metadataJson, batchFiles.length);
+    const results: BatchUploadItemResult[] = [];
+
+    for (let index = 0; index < batchFiles.length; index += 1) {
+      const file = batchFiles[index];
+      try {
+        const dto = plainToInstance(CreateDocumentDto, metadata[index]);
+        const validationErrors = await validate(dto, {
+          whitelist: true,
+          forbidNonWhitelisted: false,
+        });
+        if (validationErrors.length > 0) {
+          throw new AppError(
+            'INVALID_METADATA',
+            'Revisa los metadatos obligatorios del archivo.',
+            422,
+            false,
+            { index },
+          );
+        }
+
+        const document = await this.create(userId, file, dto);
+        results.push({
+          index,
+          filename: file.originalname,
+          status: 'accepted',
+          document,
+        });
+      } catch (error) {
+        const appError =
+          error instanceof AppError
+            ? error
+            : new AppError('INTERNAL_ERROR', 'No se pudo procesar el archivo.', 500, false);
+
+        results.push({
+          index,
+          filename: file.originalname,
+          status: 'failed',
+          error: {
+            code: appError.code,
+            message: appError.message,
+            retryable: appError.retryable,
+          },
+        });
+      }
+    }
+
+    const accepted = results.filter((result) => result.status === 'accepted').length;
+    return {
+      total: batchFiles.length,
+      accepted,
+      failed: batchFiles.length - accepted,
+      results,
+    };
+  }
+
   async findOne(userId: string, id: string) {
     const document = await this.findOwned(userId, id);
     let normalizedText: string | undefined;
@@ -156,6 +251,56 @@ export class DocumentsService {
     }
     return document;
   }
+}
+
+function parseBatchMetadata(
+  metadataJson: string | undefined,
+  fileCount: number,
+): Record<string, unknown>[] {
+  if (!metadataJson) {
+    throw new AppError(
+      'INVALID_METADATA',
+      'Falta el campo metadata con un arreglo de metadatos por archivo.',
+      422,
+      false,
+    );
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(metadataJson.replace(/^\uFEFF/, ''));
+  } catch {
+    throw new AppError('INVALID_METADATA', 'El campo metadata no es un JSON válido.', 422, false);
+  }
+
+  const items = Array.isArray(parsed) ? parsed : [parsed];
+  if (items.length !== fileCount) {
+    throw new AppError(
+      'INVALID_METADATA',
+      'La cantidad de metadatos debe coincidir con la cantidad de archivos.',
+      422,
+      false,
+      { files: fileCount, metadata: items.length },
+    );
+  }
+
+  return items.map((item, index) => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) {
+      throw new AppError(
+        'INVALID_METADATA',
+        'Cada elemento de metadata debe ser un objeto.',
+        422,
+        false,
+        { index },
+      );
+    }
+
+    const record = { ...(item as Record<string, unknown>) };
+    if (Array.isArray(record['tags'])) {
+      record['tags'] = record['tags'].map((tag) => String(tag)).join(',');
+    }
+    return record;
+  });
 }
 
 function splitTags(tags?: string): string[] {

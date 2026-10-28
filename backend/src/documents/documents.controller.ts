@@ -3,14 +3,17 @@ import {
   Controller,
   Get,
   Headers,
+  HttpCode,
+  HttpStatus,
   Param,
   Post,
   Res,
   UploadedFile,
+  UploadedFiles,
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
-import { FileInterceptor } from '@nestjs/platform-express';
+import { FileInterceptor, FilesInterceptor } from '@nestjs/platform-express';
 import type { Response } from 'express';
 import { AuthGuard } from '../auth/auth.guard';
 import { CsrfGuard } from '../auth/csrf.guard';
@@ -25,6 +28,7 @@ export class DocumentsController {
   constructor(private readonly documents: DocumentsService) {}
 
   @Post()
+  @HttpCode(HttpStatus.ACCEPTED)
   @UseGuards(CsrfGuard)
   @UseInterceptors(
     FileInterceptor('file', {
@@ -37,6 +41,22 @@ export class DocumentsController {
     @Body() dto: CreateDocumentDto,
   ) {
     return this.documents.create(user.id, file, dto);
+  }
+
+  @Post('batch')
+  @HttpCode(HttpStatus.ACCEPTED)
+  @UseGuards(CsrfGuard)
+  @UseInterceptors(
+    FilesInterceptor('files', 50, {
+      limits: { fileSize: 30 * 1024 * 1024, files: 50 },
+    }),
+  )
+  uploadBatch(
+    @CurrentUser() user: AuthContext['user'],
+    @UploadedFiles() files: Express.Multer.File[] | undefined,
+    @Body('metadata') metadata: string | undefined,
+  ) {
+    return this.documents.createBatch(user.id, files, metadata);
   }
 
   @Get(':id')

@@ -4,7 +4,7 @@
   "private": true,
   "packageManager": "pnpm@10.0.0",
   "scripts": {
-    "dev:infra": "docker compose up -d postgres redis elasticsearch",
+    "dev:infra": "docker compose up -d redis elasticsearch",
     "dev:backend": "pnpm --filter @docs/backend start:dev",
     "dev:worker": "pnpm --filter @docs/backend start:worker:dev",
     "dev:frontend": "pnpm --filter @docs/frontend start",
@@ -12,6 +12,11 @@
     "test": "pnpm --filter @docs/backend test",
     "db:generate": "pnpm --filter @docs/backend prisma:generate",
     "db:migrate": "pnpm --filter @docs/backend prisma:migrate",
-    "seed": "pnpm --filter @docs/backend seed"
+    "db:check": "pnpm --filter @docs/backend db:check",
+    "r2:check": "pnpm --filter @docs/backend r2:check",
+    "seed": "pnpm --filter @docs/backend seed",
+    "docker:up": "docker compose up --build -d",
+    "docker:down": "docker compose down",
+    "docker:seed": "docker compose --profile seed run --rm seed"
   }
 }
