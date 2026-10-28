@@ -1,13 +1,14 @@
 import { Component, OnInit, inject, signal } from '@angular/core';
-import { FormsModule } from '@angular/forms';
 import { ApiService, type ApiKeyRecord } from '../../core/api.service';
 import { apiErrorMessage } from '../../core/api-error';
 import { I18nService } from '../../core/i18n.service';
+import { ApiKeyFormComponent } from './components/api-key-form.component';
+import { ApiKeyTableComponent } from './components/api-key-table.component';
 
 @Component({
   selector: 'app-api-keys',
   standalone: true,
-  imports: [FormsModule],
+  imports: [ApiKeyFormComponent, ApiKeyTableComponent],
   template: `
     <section class="space-y-6">
       <div>
@@ -15,62 +16,18 @@ import { I18nService } from '../../core/i18n.service';
         <p class="mt-1 text-sm muted">{{ i18n.t('apiKeys.subtitle') }}</p>
       </div>
 
-      <div class="rounded-xl p-5 surface">
-        <div class="flex flex-col gap-2 sm:flex-row">
-          <input
-            class="input"
-            name="name"
-            [placeholder]="i18n.t('apiKeys.name')"
-            [(ngModel)]="name"
-          />
-          <button type="button" class="btn btn-primary" [disabled]="!name.trim()" (click)="create()">
-            {{ i18n.t('apiKeys.create') }}
-          </button>
-        </div>
+      <app-api-key-form
+        [(name)]="name"
+        [createdKey]="createdKey()"
+        (create)="create()"
+        (copy)="copy($event)"
+      />
 
-        @if (createdKey(); as key) {
-          <div class="mt-4 rounded-lg border p-4" style="border-color: var(--accent);">
-            <p class="text-sm font-semibold">{{ i18n.t('apiKeys.once') }}</p>
-            <code class="mt-2 block break-all rounded p-2 text-xs" style="background: var(--surface-muted);">{{ key }}</code>
-            <button type="button" class="btn mt-2" (click)="copy(key)">{{ i18n.t('apiKeys.copy') }}</button>
-          </div>
-        }
+      @if (error()) {
+        <p class="text-sm" style="color: var(--danger);" role="alert">{{ error() }}</p>
+      }
 
-        @if (error()) {
-          <p class="mt-3 text-sm" style="color: var(--danger);" role="alert">{{ error() }}</p>
-        }
-      </div>
-
-      <div class="rounded-xl p-5 surface">
-        @if (keys().length === 0) {
-          <p class="text-sm muted">{{ i18n.t('apiKeys.empty') }}</p>
-        } @else {
-          <table class="w-full text-left text-sm">
-            <thead>
-              <tr class="border-b" style="border-color: var(--border);">
-                <th class="py-2 pr-3">Nombre</th>
-                <th class="py-2 pr-3">Prefijo</th>
-                <th class="py-2 pr-3">Creada</th>
-                <th class="py-2">Acción</th>
-              </tr>
-            </thead>
-            <tbody>
-              @for (key of keys(); track key.id) {
-                <tr class="border-b" style="border-color: var(--border);">
-                  <td class="py-2 pr-3">{{ key.name }}</td>
-                  <td class="py-2 pr-3"><code>{{ key.prefix }}…</code></td>
-                  <td class="py-2 pr-3">{{ key.createdAt }}</td>
-                  <td class="py-2">
-                    <button type="button" class="btn" (click)="revoke(key.id)">
-                      {{ i18n.t('apiKeys.revoke') }}
-                    </button>
-                  </td>
-                </tr>
-              }
-            </tbody>
-          </table>
-        }
-      </div>
+      <app-api-key-table [keys]="keys()" (revoke)="revoke($event)" />
     </section>
   `,
 })
@@ -93,8 +50,8 @@ export class ApiKeysComponent implements OnInit {
     try {
       const result = await this.api.createApiKey(this.name.trim());
       this.createdKey.set(result.key);
+      this.keys.update((keys) => [result.apiKey, ...keys]);
       this.name = '';
-      await this.load();
     } catch (error) {
       this.error.set(apiErrorMessage(error, 'No se pudo crear la API key.'));
     }
@@ -103,7 +60,7 @@ export class ApiKeysComponent implements OnInit {
   async revoke(id: string): Promise<void> {
     try {
       await this.api.revokeApiKey(id);
-      await this.load();
+      this.keys.update((keys) => keys.filter((key) => key.id !== id));
     } catch (error) {
       this.error.set(apiErrorMessage(error, 'No se pudo revocar la API key.'));
     }

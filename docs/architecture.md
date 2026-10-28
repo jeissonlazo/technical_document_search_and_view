@@ -161,7 +161,7 @@ La aplicación escribe y busca a través del alias `documents`; el índice concr
 ## Frontend
 
 - Angular 22 + TypeScript, componentes standalone, signals y carga diferida de visores.
-- Spartan NG (`@spartan-ng/brain` + CLI/helm) sobre Angular CDK y Tailwind CSS 4; los componentes helm se copian al repositorio y se versionan con él. Button e Input ya están generados en `frontend/src/app/shared/ui` y Login es el piloto; la convención está en `docs/ui-conventions.md`.
+- Spartan NG (`@spartan-ng/brain` + CLI/helm) sobre Angular CDK y Tailwind CSS 4; los componentes helm se copian al repositorio y se versionan con él. Hay Button, Input, Textarea, Card, Badge, Table y Progress en `frontend/src/app/shared/ui`; Login, Carga, Visor y Ajustes ya usan la capa Helm y están fragmentados en componentes de feature. La convención está en `docs/ui-conventions.md`.
 - **Compatibilidad validada:** `@spartan-ng/brain` 1.8.3 declara Angular `>=21 <23`; el CLI 1.8.3 generó componentes Helm en Angular 22 correctamente. No se usa Optimus UI porque su versión 2.x exige Angular 22.1.4+ y es un fork comunitario de PrimeNG.
 - i18n runtime español/inglés con diccionarios y `code` + `params` del backend; temas claro/oscuro con variables CSS y `prefers-color-scheme`; responsive con drawer de filtros y visor a pantalla completa.
 - Interceptores para sesión/API key, errores, correlación y timeout; guards de autenticación; estado de lote en el componente/servicio y recuperación por ID tras recarga.

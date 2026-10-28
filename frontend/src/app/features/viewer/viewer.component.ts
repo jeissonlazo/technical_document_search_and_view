@@ -4,6 +4,8 @@ import { DomSanitizer, type SafeHtml } from '@angular/platform-browser';
 import { ActivatedRoute, Router } from '@angular/router';
 import DOMPurify from 'dompurify';
 import { marked } from 'marked';
+import { HlmButton } from '@spartan-ng/helm/button';
+import { HlmCard } from '@spartan-ng/helm/card';
 import { ApiService, type DocumentDetail } from '../../core/api.service';
 import { apiErrorMessage } from '../../core/api-error';
 import { I18nService } from '../../core/i18n.service';
@@ -13,80 +15,41 @@ import {
   type PdfMatchInfo,
   type PdfMatchItem,
 } from './pdf-viewer.component';
-
-interface TocItem {
-  id: string;
-  label: string;
-  level: number;
-}
+import { ViewerHeaderComponent } from './viewer-header.component';
+import { ViewerMetadataComponent } from './viewer-metadata.component';
+import { ViewerOutlineComponent } from './viewer-outline.component';
+import type { ViewerFormat, ViewerTocItem } from './viewer.models';
 
 @Component({
   selector: 'app-viewer',
   standalone: true,
-  imports: [PdfViewerComponent, DocxViewerComponent],
+  imports: [
+    PdfViewerComponent,
+    DocxViewerComponent,
+    ViewerHeaderComponent,
+    ViewerOutlineComponent,
+    ViewerMetadataComponent,
+    HlmButton,
+    HlmCard,
+  ],
   template: `
     <section class="space-y-4">
-      <div class="flex flex-wrap items-center gap-3">
-        <button
-          type="button"
-          class="text-sm"
-          style="background: none; border: 0; color: var(--accent); cursor: pointer; padding: 0;"
-          (click)="goBack()"
-        >
+      @if (document(); as doc) {
+        <app-viewer-header
+          [document]="doc"
+          [query]="query"
+          [matchCount]="matchCount()"
+          [matchIndex]="matchIndex()"
+          (back)="goBack()"
+          (copyLink)="copyLink()"
+          (previousMatch)="previousMatch()"
+          (nextMatch)="nextMatch()"
+        />
+      } @else {
+        <button hlmBtn variant="ghost" size="sm" type="button" (click)="goBack()">
           ← {{ i18n.t('viewer.back') }}
         </button>
-
-        @if (document(); as doc) {
-          <h1 class="min-w-0 max-w-full truncate text-lg font-semibold">{{ doc.title }}</h1>
-          <span
-            class="badge"
-            [class.badge-ok]="doc.status === 'INDEXED'"
-            [class.badge-error]="doc.status === 'ERROR'"
-          >
-            {{ i18n.t('status.' + doc.status) }}
-          </span>
-
-          <div class="ml-auto flex flex-wrap items-center gap-2">
-            @if (query) {
-              <div class="flex items-center gap-1 rounded-lg border px-2 py-1" style="border-color: var(--border);">
-                <span class="text-xs muted">
-                  {{ i18n.t('viewer.matches') }} {{ matchLabel() }}
-                </span>
-                <button
-                  type="button"
-                  class="px-1"
-                  style="background: none; border: 0; color: var(--fg); cursor: pointer;"
-                  [disabled]="matchCount() === 0"
-                  (click)="previousMatch()"
-                  [attr.aria-label]="i18n.t('viewer.previousMatch')"
-                >
-                  ↑
-                </button>
-                <button
-                  type="button"
-                  class="px-1"
-                  style="background: none; border: 0; color: var(--fg); cursor: pointer;"
-                  [disabled]="matchCount() === 0"
-                  (click)="nextMatch()"
-                  [attr.aria-label]="i18n.t('viewer.nextMatch')"
-                >
-                  ↓
-                </button>
-              </div>
-            }
-            <button type="button" class="btn" (click)="copyLink()">
-              {{ i18n.t('viewer.copyLink') }}
-            </button>
-            <a
-              class="btn"
-              [href]="doc.contentUrl"
-              [attr.download]="doc.originalFilename ?? doc.title"
-            >
-              {{ i18n.t('viewer.download') }}
-            </a>
-          </div>
-        }
-      </div>
+      }
 
       @if (loading()) {
         <div class="rounded-xl p-8 text-center surface">
@@ -99,56 +62,17 @@ interface TocItem {
       } @else {
         @if (document(); as doc) {
           <div class="grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,7fr)_minmax(0,3fr)]">
-            <aside class="h-fit rounded-xl p-4 surface lg:sticky lg:top-6">
-              <h2 class="text-xs font-semibold uppercase tracking-wide muted">
-                {{ i18n.t('viewer.contents') }}
-              </h2>
-              <nav class="mt-3 max-h-[40vh] space-y-1 overflow-auto">
-                @for (section of toc(); track section.id) {
-                  <button
-                    type="button"
-                    class="block w-full rounded px-2 py-1.5 text-left text-sm"
-                    [style.padding-left.rem]="0.5 + section.level * 0.5"
-                    (click)="scrollToSection(section.id)"
-                  >
-                    {{ section.label }}
-                  </button>
-                }
-                @if (toc().length === 0) {
-                  <p class="text-xs muted">{{ i18n.t('viewer.fullDocument') }}</p>
-                }
-              </nav>
+            <app-viewer-outline
+              [toc]="toc()"
+              [matches]="pdfMatches()"
+              [matchIndex]="matchIndex()"
+              [query]="query"
+              [showMatches]="format(doc) === 'pdf'"
+              (sectionSelected)="scrollToSection($event)"
+              (matchSelected)="goToPdfMatch($event)"
+            />
 
-              @if (format(doc) === 'pdf' && query && pdfMatches().length) {
-                <div class="mt-4 border-t pt-3" style="border-color: var(--border);">
-                  <div class="flex items-center justify-between gap-2">
-                    <h3 class="text-xs font-semibold uppercase tracking-wide muted">
-                      {{ i18n.t('viewer.matchesList') }}
-                    </h3>
-                    <span class="text-xs muted">{{ pdfMatches().length }}</span>
-                  </div>
-                  <div class="mt-2 max-h-[40vh] space-y-1 overflow-auto">
-                    @for (match of pdfMatches(); track $index; let index = $index) {
-                      <button
-                        type="button"
-                        class="flex w-full items-start gap-2 rounded px-2 py-1.5 text-left text-xs"
-                        [style.background]="
-                          matchIndex() === index ? 'var(--surface-muted)' : 'transparent'
-                        "
-                        (click)="goToPdfMatch(index)"
-                      >
-                        <span class="badge flex-none">
-                          {{ i18n.t('viewer.page') }} {{ match.page }}
-                        </span>
-                        <span class="min-w-0">{{ match.excerpt }}</span>
-                      </button>
-                    }
-                  </div>
-                </div>
-              }
-            </aside>
-
-            <div class="min-w-0 rounded-xl p-4 surface">
+            <div hlmCard class="min-w-0">
               @if (format(doc) === 'pdf') {
                 <app-pdf-viewer
                   #pdfViewer
@@ -168,7 +92,7 @@ interface TocItem {
                 ></article>
               } @else {
                 <div class="mb-2 flex justify-end">
-                  <button type="button" class="btn" (click)="copyText()">
+                  <button hlmBtn variant="outline" size="sm" type="button" (click)="copyText()">
                     {{ i18n.t('viewer.copy') }}
                   </button>
                 </div>
@@ -181,79 +105,7 @@ interface TocItem {
               }
             </div>
 
-            <aside class="h-fit rounded-xl p-4 surface lg:sticky lg:top-6">
-              <h2 class="text-xs font-semibold uppercase tracking-wide muted">
-                {{ i18n.t('viewer.metadata') }}
-              </h2>
-              <dl class="mt-3 space-y-2 text-sm">
-                <div class="flex justify-between gap-3">
-                  <dt class="muted">{{ i18n.t('viewer.author') }}</dt>
-                  <dd class="text-right">{{ doc.author || '—' }}</dd>
-                </div>
-                <div class="flex justify-between gap-3">
-                  <dt class="muted">{{ i18n.t('viewer.category') }}</dt>
-                  <dd class="text-right">{{ doc.category || '—' }}</dd>
-                </div>
-                <div class="flex justify-between gap-3">
-                  <dt class="muted">{{ i18n.t('viewer.version') }}</dt>
-                  <dd>{{ doc.version || '—' }}</dd>
-                </div>
-                <div class="flex justify-between gap-3">
-                  <dt class="muted">{{ i18n.t('viewer.type') }}</dt>
-                  <dd>{{ typeLabel(doc) }}</dd>
-                </div>
-                <div class="flex justify-between gap-3">
-                  <dt class="muted">{{ i18n.t('viewer.size') }}</dt>
-                  <dd>{{ formatSize(doc.size) }}</dd>
-                </div>
-                @if (pageCount() !== null) {
-                  <div class="flex justify-between gap-3">
-                    <dt class="muted">{{ i18n.t('viewer.pages') }}</dt>
-                    <dd>{{ pageCount() }}</dd>
-                  </div>
-                }
-                <div class="flex justify-between gap-3">
-                  <dt class="muted">{{ i18n.t('viewer.uploaded') }}</dt>
-                  <dd>{{ formatDate(doc.createdAt) }}</dd>
-                </div>
-                @if (doc.indexedAt) {
-                  <div class="flex justify-between gap-3">
-                    <dt class="muted">{{ i18n.t('viewer.indexed') }}</dt>
-                    <dd>{{ formatDate(doc.indexedAt) }}</dd>
-                  </div>
-                }
-                <div class="flex justify-between gap-3">
-                  <dt class="muted">{{ i18n.t('viewer.tracking') }}</dt>
-                  <dd class="break-all text-right text-xs">{{ doc.trackingId }}</dd>
-                </div>
-              </dl>
-
-              @if (doc.tags.length) {
-                <div class="mt-4">
-                  <p class="text-xs font-semibold uppercase tracking-wide muted">
-                    {{ i18n.t('viewer.tags') }}
-                  </p>
-                  <div class="mt-2 flex flex-wrap gap-1.5">
-                    @for (tag of doc.tags; track tag) {
-                      <span class="badge">{{ tag }}</span>
-                    }
-                  </div>
-                </div>
-              }
-
-              @if (doc.description) {
-                <div class="mt-4 border-t pt-3" style="border-color: var(--border);">
-                  <p class="text-xs font-semibold uppercase tracking-wide muted">
-                    {{ i18n.t('viewer.description') }}
-                  </p>
-                  <p class="mt-1 text-sm">{{ doc.description }}</p>
-                </div>
-              }
-
-              @if (doc.status === 'ERROR' && doc.errorMessage) {
-                <p class="mt-3 text-sm" style="color: var(--danger);">{{ doc.errorMessage }}</p>
-              }
-            </aside>
+            <app-viewer-metadata [document]="doc" [pageCount]="pageCount()" />
           </div>
         }
       }
@@ -276,7 +128,7 @@ export class ViewerComponent implements OnInit {
   readonly error = signal('');
   readonly markdownHtml = signal<SafeHtml | null>(null);
   readonly textHtml = signal<SafeHtml | null>(null);
-  readonly toc = signal<TocItem[]>([]);
+  readonly toc = signal<ViewerTocItem[]>([]);
   readonly matchCount = signal(0);
   readonly matchIndex = signal(0);
   readonly pageCount = signal<number | null>(null);
@@ -311,16 +163,11 @@ export class ViewerComponent implements OnInit {
     }
   }
 
-  format(doc: DocumentDetail): 'pdf' | 'docx' | 'markdown' | 'text' {
+  format(doc: DocumentDetail): ViewerFormat {
     if (doc.mime.includes('pdf')) return 'pdf';
     if (doc.mime.includes('wordprocessingml')) return 'docx';
     if (doc.mime.includes('markdown')) return 'markdown';
     return 'text';
-  }
-
-  matchLabel(): string {
-    if (this.matchCount() === 0) return `0 ${this.i18n.t('viewer.of')} 0`;
-    return `${this.matchIndex() + 1} ${this.i18n.t('viewer.of')} ${this.matchCount()}`;
   }
 
   onPdfMatches(info: PdfMatchInfo): void {
@@ -384,32 +231,7 @@ export class ViewerComponent implements OnInit {
     }
   }
 
-  formatSize(bytes: number): string {
-    if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
-    if (bytes >= 1024) return `${Math.round(bytes / 1024)} KB`;
-    return `${bytes} B`;
-  }
-
-  formatDate(value?: string | null): string {
-    if (!value) return '—';
-    const date = new Date(value);
-    if (Number.isNaN(date.getTime())) return '—';
-    return new Intl.DateTimeFormat(this.i18n.lang(), {
-      day: '2-digit',
-      month: 'short',
-      year: 'numeric',
-    }).format(date);
-  }
-
-  typeLabel(doc: DocumentDetail): string {
-    const format = this.format(doc);
-    if (format === 'pdf') return 'PDF';
-    if (format === 'markdown') return 'Markdown';
-    if (format === 'docx') return 'Word';
-    return 'Texto';
-  }
-
-  private formatOfCurrent(): 'pdf' | 'docx' | 'markdown' | 'text' | null {
+  private formatOfCurrent(): ViewerFormat | null {
     const doc = this.document();
     return doc ? this.format(doc) : null;
   }
@@ -459,8 +281,8 @@ export class ViewerComponent implements OnInit {
     setTimeout(() => this.focusCurrentMatch(), 0);
   }
 
-  private buildToc(container: HTMLElement): TocItem[] {
-    const sections: TocItem[] = [];
+  private buildToc(container: HTMLElement): ViewerTocItem[] {
+    const sections: ViewerTocItem[] = [];
     const headings = Array.from(container.querySelectorAll('h1, h2, h3'));
 
     headings.forEach((heading, index) => {

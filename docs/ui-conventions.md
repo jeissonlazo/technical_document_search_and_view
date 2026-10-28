@@ -21,6 +21,11 @@ Los componentes Helm **no se importan desde node_modules**. Se generan con el CL
 frontend/src/app/shared/ui/
   button/src/lib/hlm-button.ts
   input/src/lib/hlm-input.ts
+  textarea/src/lib/hlm-textarea.ts
+  card/src/lib/hlm-card.ts
+  badge/src/lib/hlm-badge.ts
+  table/src/lib/hlm-table.ts
+  progress/src/lib/hlm-progress.ts
   utils/src/lib/hlm.ts
 ```
 
@@ -81,9 +86,32 @@ El generador actualiza `components.json` y los paths de `tsconfig.json`. Revisar
 
 ## Estado de adopción
 
-- **Login:** piloto con `HlmButton` y `HlmInput`.
-- **Búsqueda:** resultados extraídos a `app-search-results`; todavía usa `.btn`/`.input` propios.
-- **Carga, visor y ajustes:** pendientes de migración.
+- **Login:** `HlmButton` y `HlmInput`.
+- **Búsqueda:** resultados extraídos a `app-search-results` y `app-document-icon`; los controles propios siguen pendientes.
+- **Carga:** dividida en `app-upload-dropzone`, `app-upload-metadata-form` y `app-upload-queue`; usa `HlmCard`, `HlmBadge`, `HlmInput`, `HlmTextarea`, `HlmButton` y `HlmProgress`.
+- **Visor:** dividido en `app-viewer-header`, `app-viewer-outline` y `app-viewer-metadata`; usa `HlmCard`, `HlmBadge` y `HlmButton`. Los renderers PDF/DOCX permanecen especializados.
+- **Ajustes:** dividido en `app-api-key-form` y `app-api-key-table`; usa `HlmCard`, `HlmInput`, `HlmButton` y `HlmTable`.
+
+## Fragmentación por feature
+
+```text
+features/upload/components/
+  upload-dropzone.component.ts
+  upload-metadata-form.component.ts
+  upload-queue.component.ts
+
+features/viewer/
+  viewer-header.component.ts
+  viewer-outline.component.ts
+  viewer-metadata.component.ts
+  viewer.models.ts
+
+features/settings/components/
+  api-key-form.component.ts
+  api-key-table.component.ts
+```
+
+La pantalla conserva el estado y las llamadas al API; los componentes hijos reciben datos y emiten eventos. No se comparten servicios de feature desde los hijos.
 
 ## Orden de migración
 
