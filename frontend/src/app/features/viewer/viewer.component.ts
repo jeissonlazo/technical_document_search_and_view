@@ -61,7 +61,7 @@ import type { ViewerFormat, ViewerTocItem } from './viewer.models';
         </div>
       } @else {
         @if (document(); as doc) {
-          <div class="grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,7fr)_minmax(0,3fr)]">
+          <div class="grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,7fr)_minmax(0,3fr)] mt-4">
             <app-viewer-outline
               [toc]="toc()"
               [matches]="pdfMatches()"
@@ -87,7 +87,7 @@ import type { ViewerFormat, ViewerTocItem } from './viewer.models';
               } @else if (format(doc) === 'markdown') {
                 <article
                   #content
-                  class="markdown-body max-w-none px-2 py-1"
+                  class="markdown-body max-w-none px-8 py-1"
                   [innerHTML]="markdownHtml()"
                 ></article>
               } @else {

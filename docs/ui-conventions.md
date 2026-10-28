@@ -90,7 +90,7 @@ El generador actualiza `components.json` y los paths de `tsconfig.json`. Revisar
 
 - **Login:** `HlmButton` y `HlmInput`.
 - **Búsqueda:** resultados extraídos a `app-search-results` y `app-document-icon`; los controles propios siguen pendientes.
-- **Carga:** dividida en `app-upload-dropzone`, `app-upload-metadata-form` y `app-upload-queue`; usa `HlmCard`, `HlmBadge`, `HlmInput`, `HlmTextarea`, `HlmButton`, `HlmProgress`, `HlmAlert` (`app-upload-alert-stack`) y `app-category-combobox` (Combobox múltiple con chips; `Enter` agrega la categoría escrita; las categorías se persisten como `string[]`).
+- **Carga:** dividida en `app-upload-dropzone`, `app-upload-metadata-form` y `app-upload-queue`; usa `HlmCard`, `HlmBadge`, `HlmInput`, `HlmTextarea`, `HlmButton`, `HlmProgress`, `HlmAlert` (`app-upload-alert-stack`, con cierre automático a los 6 s) y `app-category-combobox` (Combobox múltiple con chips; `Enter` agrega la categoría escrita; las categorías se persisten como `string[]`).
 - **Visor:** dividido en `app-viewer-header`, `app-viewer-outline` y `app-viewer-metadata`; usa `HlmCard`, `HlmBadge` y `HlmButton`. Los renderers PDF/DOCX permanecen especializados.
 - **Editor:** dividido en `app-markdown-editor`, `app-editor-toolbar` y `app-editor-metadata-panel`; usa `HlmCard`, `HlmBadge`, `HlmButton`, `HlmInput`, `HlmTextarea` y `app-category-combobox`. La barra de formato no conoce TipTap: recibe el estado activo y emite `EditorCommand`.
 - **Ajustes:** dividido en `app-api-key-form` y `app-api-key-table`; usa `HlmCard`, `HlmInput`, `HlmButton` y `HlmTable`.

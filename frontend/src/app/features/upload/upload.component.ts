@@ -1,4 +1,4 @@
-import { Component, effect, inject, signal, untracked } from '@angular/core';
+import { Component, OnDestroy, effect, inject, signal, untracked } from '@angular/core';
 import type { DocumentStatus } from '@docs/shared';
 import { ApiService, type UploadMetadata } from '../../core/api.service';
 import { apiErrorMessage } from '../../core/api-error';
@@ -15,6 +15,8 @@ import {
   type UploadAlert,
   type UploadAlertKind,
 } from './upload.models';
+
+const ALERT_AUTO_DISMISS_MS = 6000;
 
 @Component({
   selector: 'app-upload',
@@ -74,7 +76,7 @@ import {
     </section>
   `,
 })
-export class UploadComponent {
+export class UploadComponent implements OnDestroy {
   private readonly api = inject(ApiService);
   private readonly sse = inject(SseService);
   readonly i18n = inject(I18nService);
@@ -87,6 +89,7 @@ export class UploadComponent {
   readonly maxFiles = MAX_FILES;
   private sseWasConnected = false;
   private alertSequence = 0;
+  private readonly alertTimers = new Map<number, ReturnType<typeof setTimeout>>();
 
   metadata: UploadMetadata = {
     title: '',
@@ -297,7 +300,13 @@ export class UploadComponent {
   }
 
   dismissAlert(id: number): void {
+    this.clearAlertTimer(id);
     this.alerts.update((alerts) => alerts.filter((alert) => alert.id !== id));
+  }
+
+  ngOnDestroy(): void {
+    for (const timer of this.alertTimers.values()) clearTimeout(timer);
+    this.alertTimers.clear();
   }
 
   private notifyStatus(
@@ -333,8 +342,28 @@ export class UploadComponent {
 
   private pushAlert(kind: UploadAlertKind, title: string, message: string): void {
     this.alertSequence += 1;
-    this.alerts.update((alerts) =>
-      [{ id: this.alertSequence, kind, title, message }, ...alerts].slice(0, 5),
-    );
+    const alert: UploadAlert = {
+      id: this.alertSequence,
+      kind,
+      title,
+      message,
+    };
+
+    this.alerts.update((alerts) => {
+      const next = [alert, ...alerts];
+      for (const dropped of next.slice(5)) this.clearAlertTimer(dropped.id);
+      return next.slice(0, 5);
+    });
+
+    const timer = setTimeout(() => this.dismissAlert(alert.id), ALERT_AUTO_DISMISS_MS);
+    this.alertTimers.set(alert.id, timer);
+  }
+
+  private clearAlertTimer(id: number): void {
+    const timer = this.alertTimers.get(id);
+    if (timer) {
+      clearTimeout(timer);
+      this.alertTimers.delete(id);
+    }
   }
 }
