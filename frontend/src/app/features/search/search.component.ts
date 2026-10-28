@@ -323,7 +323,11 @@ type SortMode = 'relevance' | 'title' | 'date';
               </div>
 
               <div class="mt-4 flex gap-2">
-                <a class="btn btn-primary flex-1 text-center" [routerLink]="['/documents', hit.id]">
+                <a
+                  class="btn btn-primary flex-1 text-center"
+                  [routerLink]="['/documents', hit.id]"
+                  [queryParams]="query ? { q: query } : {}"
+                >
                   {{ i18n.t('search.openViewer') }}
                 </a>
                 <a
@@ -683,7 +687,7 @@ export class SearchComponent implements OnInit {
   private async loadPageCount(hit: SearchHit): Promise<void> {
     try {
       const pdfjs = await import('pdfjs-dist');
-      pdfjs.GlobalWorkerOptions.workerSrc = '/assets/pdf.worker.min.mjs';
+      pdfjs.GlobalWorkerOptions.workerSrc = '/assets/pdf.worker.min.mjs?v=20261028';
       const task = pdfjs.getDocument({
         url: this.contentUrl(hit),
         withCredentials: true,

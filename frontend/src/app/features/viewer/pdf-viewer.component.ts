@@ -2,14 +2,28 @@ import {
   AfterViewInit,
   Component,
   ElementRef,
+  EventEmitter,
   Input,
+  OnChanges,
+  Output,
+  QueryList,
+  SimpleChanges,
   ViewChild,
+  ViewChildren,
+  inject,
   signal,
 } from '@angular/core';
+import { I18nService } from '../../core/i18n.service';
+
+export interface PdfMatchInfo {
+  current: number;
+  total: number;
+}
 
 interface PdfPageLike {
   getViewport: (options: { scale: number }) => { width: number; height: number };
   streamTextContent: () => unknown;
+  getTextContent: () => Promise<{ items: Array<{ str?: string }> }>;
   render: (options: { canvasContext: CanvasRenderingContext2D; viewport: unknown }) => {
     promise: Promise<void>;
   };
@@ -20,82 +34,142 @@ interface PdfDocumentLike {
   getPage: (page: number) => Promise<PdfPageLike>;
 }
 
+interface PdfMatchItem {
+  page: number;
+  excerpt: string;
+}
+
 @Component({
   selector: 'app-pdf-viewer',
   standalone: true,
   template: `
     <div class="space-y-3">
-      <div class="flex flex-wrap items-center gap-2">
-        <button type="button" class="btn" [disabled]="page() <= 1" (click)="previous()">←</button>
+      @if (error()) {
+        <div class="rounded-lg border p-4" style="border-color: var(--danger);">
+          <p class="text-sm" style="color: var(--danger);" role="alert">{{ error() }}</p>
+          <a class="btn mt-2 inline-flex" [href]="src" download>Descargar PDF</a>
+        </div>
+      }
+
+      <div
+        #scrollContainer
+        class="pdf-scroll rounded-lg"
+        (scroll)="onScroll()"
+      >
+        @for (pageNumber of pageNumbers(); track pageNumber) {
+          <div class="pdf-page" [attr.data-page]="pageNumber">
+            <canvas #canvas class="block"></canvas>
+            <div #textLayer class="textLayer"></div>
+          </div>
+        }
+        @if (loading()) {
+          <p class="py-6 text-center text-sm muted">{{ i18n.t('viewer.loading') }}</p>
+        }
+      </div>
+
+      <div class="flex flex-wrap items-center justify-center gap-2 border-t pt-3" style="border-color: var(--border);">
+        <button type="button" class="btn px-2 py-1" [disabled]="page() <= 1" (click)="previous()">←</button>
         <input
-          class="input w-16 text-center"
+          class="input text-center"
+          style="width: 4.5rem;"
           type="number"
           min="1"
           [max]="pages()"
           [value]="page()"
           (change)="goToPage($event)"
-          aria-label="Página"
+          [attr.aria-label]="i18n.t('viewer.page')"
         />
-        <span class="text-sm">/ {{ pages() }}</span>
-        <button type="button" class="btn" [disabled]="page() >= pages()" (click)="next()">→</button>
-        <button type="button" class="btn" (click)="zoomOut()">−</button>
-        <span class="text-sm">{{ (scale() * 100).toFixed(0) }}%</span>
-        <button type="button" class="btn" (click)="zoomIn()">+</button>
-        @if (loading()) { <span class="text-sm muted">Cargando PDF…</span> }
+        <span class="text-xs muted">/ {{ pages() }}</span>
+        <button type="button" class="btn px-2 py-1" [disabled]="page() >= pages()" (click)="next()">→</button>
+        <span class="mx-1 text-xs muted">|</span>
+        <button type="button" class="btn px-2 py-1" (click)="zoomOut()">−</button>
+        <span class="text-xs muted">{{ (scale() * 100).toFixed(0) }}%</span>
+        <button type="button" class="btn px-2 py-1" (click)="zoomIn()">+</button>
       </div>
 
-      @if (error()) {
-        <p class="text-sm" style="color: var(--danger);" role="alert">{{ error() }}</p>
+      @if (query && matches().length) {
+        <section class="overflow-hidden rounded-xl border" style="border-color: var(--border);">
+          <div class="flex items-center justify-between gap-2 px-3 py-2" style="background: var(--surface-muted);">
+            <h3 class="text-xs font-semibold uppercase tracking-wide muted">
+              {{ i18n.t('viewer.matchesList') }}
+            </h3>
+            <span class="text-xs muted">{{ matches().length }}</span>
+          </div>
+          <div class="max-h-56 overflow-auto">
+            @for (match of matches(); track $index; let index = $index) {
+              <button
+                type="button"
+                class="flex w-full items-start gap-2 border-t px-3 py-2 text-left text-sm"
+                style="border-color: var(--border);"
+                [style.background]="currentMatch() === index + 1 ? 'var(--surface-muted)' : 'transparent'"
+                (click)="goToMatchIndex(index)"
+              >
+                <span class="badge flex-none">{{ i18n.t('viewer.page') }} {{ match.page }}</span>
+                <span class="min-w-0">{{ match.excerpt }}</span>
+              </button>
+            }
+          </div>
+        </section>
       }
-
-      <div class="overflow-auto rounded-lg" style="background: var(--surface-muted);">
-        <div class="pdf-page">
-          <canvas #canvas class="block"></canvas>
-          <div #textLayer class="textLayer"></div>
-        </div>
-      </div>
     </div>
   `,
 })
-export class PdfViewerComponent implements AfterViewInit {
+export class PdfViewerComponent implements AfterViewInit, OnChanges {
+  readonly i18n = inject(I18nService);
+
   @Input({ required: true }) src!: string;
-  @ViewChild('canvas') canvasRef!: ElementRef<HTMLCanvasElement>;
-  @ViewChild('textLayer') textLayerRef!: ElementRef<HTMLDivElement>;
+  @Input() query = '';
+  @Output() readonly matchesChange = new EventEmitter<PdfMatchInfo>();
+  @Output() readonly pageCountChange = new EventEmitter<number>();
+  @ViewChild('scrollContainer') private scrollContainer!: ElementRef<HTMLDivElement>;
+  @ViewChildren('canvas') private canvasRefs!: QueryList<ElementRef<HTMLCanvasElement>>;
+  @ViewChildren('textLayer') private textLayerRefs!: QueryList<ElementRef<HTMLDivElement>>;
 
   readonly page = signal(1);
   readonly pages = signal(1);
-  readonly scale = signal(1.2);
+  readonly scale = signal(1.0);
   readonly loading = signal(true);
   readonly error = signal('');
+  readonly matches = signal<PdfMatchItem[]>([]);
+  readonly currentMatch = signal(0);
 
   private pdf: PdfDocumentLike | null = null;
+  private matchPages: number[] = [];
+  private rendering = false;
 
   async ngAfterViewInit(): Promise<void> {
     try {
       const pdfjs = await import('pdfjs-dist');
-      pdfjs.GlobalWorkerOptions.workerSrc = '/assets/pdf.worker.min.mjs';
+      pdfjs.GlobalWorkerOptions.workerSrc = '/assets/pdf.worker.min.mjs?v=20261028';
       const task = pdfjs.getDocument({ url: this.src, withCredentials: true } as any);
       this.pdf = (await task.promise) as unknown as PdfDocumentLike;
       this.pages.set(this.pdf?.numPages ?? 1);
-      await this.render();
-    } catch {
-      this.error.set('No se pudo cargar el PDF.');
+      this.pageCountChange.emit(this.pages());
+      await this.countMatches();
+      await this.renderAllPages();
+    } catch (error) {
+      console.error('No se pudo cargar el PDF', error);
+      this.error.set('No se pudo cargar el PDF. Verifica que el archivo siga disponible o descárgalo.');
     } finally {
       this.loading.set(false);
     }
   }
 
-  async previous(): Promise<void> {
-    if (this.page() > 1) {
-      this.page.update((value) => value - 1);
-      await this.render();
+  ngOnChanges(changes: SimpleChanges): void {
+    if (changes['query'] && !changes['query'].firstChange && this.pdf) {
+      void this.refreshMatches();
     }
   }
 
   async next(): Promise<void> {
     if (this.page() < this.pages()) {
-      this.page.update((value) => value + 1);
-      await this.render();
+      this.scrollToPage(this.page() + 1);
+    }
+  }
+
+  async previous(): Promise<void> {
+    if (this.page() > 1) {
+      this.scrollToPage(this.page() - 1);
     }
   }
 
@@ -107,46 +181,191 @@ export class PdfViewerComponent implements AfterViewInit {
       return;
     }
 
-    const nextPage = Math.min(this.pages(), Math.max(1, Math.trunc(requested)));
-    this.page.set(nextPage);
-    input.value = String(nextPage);
-    await this.render();
+    this.scrollToPage(requested);
+  }
+
+  async goToPageNumber(pageNumber: number): Promise<void> {
+    if (!Number.isFinite(pageNumber)) return;
+    this.scrollToPage(pageNumber);
+  }
+
+  async nextMatch(): Promise<void> {
+    if (this.matches().length === 0) return;
+    const next = this.currentMatch() >= this.matches().length ? 1 : this.currentMatch() + 1;
+    this.goToMatchIndex(next - 1);
+  }
+
+  async previousMatch(): Promise<void> {
+    if (this.matches().length === 0) return;
+    const previous = this.currentMatch() <= 1 ? this.matches().length : this.currentMatch() - 1;
+    this.goToMatchIndex(previous - 1);
   }
 
   async zoomIn(): Promise<void> {
     this.scale.update((value) => Math.min(2.5, value + 0.2));
-    await this.render();
+    await this.renderAllPages();
   }
 
   async zoomOut(): Promise<void> {
     this.scale.update((value) => Math.max(0.6, value - 0.2));
-    await this.render();
+    await this.renderAllPages();
   }
 
-  private async render(): Promise<void> {
-    if (!this.pdf) return;
-    const page = await this.pdf.getPage(this.page());
-    const viewport = page.getViewport({ scale: this.scale() });
-    const canvas = this.canvasRef.nativeElement;
-    const context = canvas.getContext('2d');
-    if (!context) return;
+  onScroll(): void {
+    const container = this.scrollContainer?.nativeElement;
+    if (!container) return;
 
-    canvas.width = viewport.width;
-    canvas.height = viewport.height;
-    await page.render({ canvasContext: context, viewport }).promise;
+    const pages = Array.from(container.querySelectorAll<HTMLElement>('.pdf-page'));
+    let current = 1;
+    for (let index = 0; index < pages.length; index += 1) {
+      if (pages[index].offsetTop - container.scrollTop <= 24) current = index + 1;
+    }
+    if (current !== this.page()) this.page.set(current);
+  }
 
-    const textLayerElement = this.textLayerRef.nativeElement;
-    textLayerElement.innerHTML = '';
-    textLayerElement.style.width = `${viewport.width}px`;
-    textLayerElement.style.height = `${viewport.height}px`;
-    textLayerElement.style.setProperty('--scale-factor', String(this.scale()));
+  goToMatchIndex(index: number): void {
+    const match = this.matches()[index];
+    if (!match) return;
 
-    const pdfjs = await import('pdfjs-dist');
-    const textLayer = new pdfjs.TextLayer({
-      textContentSource: page.streamTextContent() as never,
-      container: textLayerElement,
-      viewport: viewport as never,
+    this.currentMatch.set(index + 1);
+    this.scrollToPage(match.page);
+    this.emitMatches();
+
+    // Marca visualmente la coincidencia actual de la página.
+    setTimeout(() => {
+      const pageElement = this.pageElement(match.page);
+      const hits = pageElement?.querySelectorAll<HTMLElement>('.pdf-hit');
+      hits?.forEach((hit) => hit.classList.remove('pdf-hit-current'));
+      hits?.[0]?.classList.add('pdf-hit-current');
+    }, 250);
+  }
+
+  pageNumbers(): number[] {
+    return Array.from({ length: this.pages() }, (_, index) => index + 1);
+  }
+
+  private async refreshMatches(): Promise<void> {
+    await this.countMatches();
+    await this.renderAllPages();
+  }
+
+  private async countMatches(): Promise<void> {
+    this.matches.set([]);
+    this.matchPages = [];
+    this.currentMatch.set(0);
+    const needle = this.query.trim();
+
+    if (needle && this.pdf) {
+      const matchItems: PdfMatchItem[] = [];
+      const lowerNeedle = needle.toLowerCase();
+
+      for (let pageNumber = 1; pageNumber <= this.pages(); pageNumber += 1) {
+        const page = await this.pdf.getPage(pageNumber);
+        const content = await page.getTextContent();
+        const text = content.items
+          .map((item) => item.str ?? '')
+          .join(' ')
+          .replace(/\s+/g, ' ')
+          .trim();
+        const lowerText = text.toLowerCase();
+        let index = 0;
+
+        while ((index = lowerText.indexOf(lowerNeedle, index)) !== -1) {
+          this.matchPages.push(pageNumber);
+          const start = Math.max(0, index - 50);
+          const end = Math.min(text.length, index + needle.length + 70);
+          const excerpt =
+            `${start > 0 ? '…' : ''}${text.slice(start, end).trim()}${end < text.length ? '…' : ''}`;
+          matchItems.push({ page: pageNumber, excerpt });
+          index += Math.max(1, needle.length);
+        }
+      }
+
+      this.matches.set(matchItems);
+      this.currentMatch.set(matchItems.length ? 1 : 0);
+    }
+
+    this.emitMatches();
+  }
+
+  private emitMatches(): void {
+    this.matchesChange.emit({
+      current: this.currentMatch(),
+      total: this.matches().length,
     });
-    await textLayer.render();
+  }
+
+  private scrollToPage(pageNumber: number): void {
+    const container = this.scrollContainer?.nativeElement;
+    if (!container) return;
+
+    const target = Math.min(this.pages(), Math.max(1, Math.trunc(pageNumber)));
+    const pageElement = this.pageElement(target);
+    if (pageElement) {
+      container.scrollTo({ top: pageElement.offsetTop - 8, behavior: 'smooth' });
+    }
+    this.page.set(target);
+  }
+
+  private pageElement(pageNumber: number): HTMLElement | null {
+    return (
+      this.scrollContainer?.nativeElement.querySelector<HTMLElement>(
+        `.pdf-page[data-page="${pageNumber}"]`,
+      ) ?? null
+    );
+  }
+
+  private async renderAllPages(): Promise<void> {
+    if (!this.pdf || this.rendering) return;
+    this.rendering = true;
+    try {
+      // Espera a que Angular materialice los canvas del @for.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      const canvases = this.canvasRefs.toArray();
+      const textLayers = this.textLayerRefs.toArray();
+
+      for (let index = 0; index < this.pages(); index += 1) {
+        const pageNumber = index + 1;
+        const page = await this.pdf.getPage(pageNumber);
+        const viewport = page.getViewport({ scale: this.scale() });
+        const canvas = canvases[index]?.nativeElement;
+        const textLayerElement = textLayers[index]?.nativeElement;
+        if (!canvas || !textLayerElement) continue;
+
+        const context = canvas.getContext('2d');
+        if (!context) continue;
+
+        canvas.width = viewport.width;
+        canvas.height = viewport.height;
+        await page.render({ canvasContext: context, viewport }).promise;
+
+        textLayerElement.innerHTML = '';
+        textLayerElement.style.width = `${viewport.width}px`;
+        textLayerElement.style.height = `${viewport.height}px`;
+        textLayerElement.style.setProperty('--scale-factor', String(this.scale()));
+
+        const pdfjs = await import('pdfjs-dist');
+        const textLayer = new pdfjs.TextLayer({
+          textContentSource: page.streamTextContent() as never,
+          container: textLayerElement,
+          viewport: viewport as never,
+        });
+        await textLayer.render();
+        this.highlightTextLayer(textLayerElement);
+      }
+    } finally {
+      this.rendering = false;
+    }
+  }
+
+  private highlightTextLayer(textLayerElement: HTMLDivElement): void {
+    const needle = this.query.trim().toLowerCase();
+    if (!needle) return;
+
+    textLayerElement.querySelectorAll<HTMLSpanElement>('span').forEach((span) => {
+      if ((span.textContent ?? '').toLowerCase().includes(needle)) {
+        span.classList.add('pdf-hit');
+      }
+    });
   }
 }
