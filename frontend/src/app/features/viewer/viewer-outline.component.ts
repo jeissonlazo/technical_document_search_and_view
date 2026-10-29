@@ -65,7 +65,6 @@ import type { ViewerTocItem } from './viewer.models';
                   <span hlmBadge variant="secondary" class="flex-none">
                     {{ i18n.t('viewer.page') }} {{ match.page }}
                   </span>
-                  <span class="min-w-0">{{ match.excerpt }}</span>
                 </button>
               }
             </div>
