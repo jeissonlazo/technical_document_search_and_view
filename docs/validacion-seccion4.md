@@ -57,11 +57,12 @@ pagination.items = 1
 
 ## Cambio aplicado
 
-En `SearchService`, una consulta delimitada por comillas dobles o tipográficas se envía como `multi_match` con `type: 'phrase'`. Las consultas sin comillas mantienen `fuzziness: AUTO`.
+En `SearchService`, una consulta delimitada por comillas dobles o tipográficas se envía como `multi_match` con `type: 'phrase'`. Las consultas sin comillas combinan dos cláusulas en `bool.should` (`minimum_should_match: 1`): `fuzziness: AUTO` sobre los campos de texto y búsqueda por prefijo sobre los subcampos `*.prefix` (`edge_ngram` 3–20), que es lo que permite encontrar `arquitectura` escribiendo `arqui`.
 
 ```text
 "ornitorrinco azul"  -> frase exacta
 ornitorrinco         -> términos con tolerancia a errores
+arqui                -> prefijo (desde 3 caracteres) + términos
 ```
 
 ## Pruebas y limpieza

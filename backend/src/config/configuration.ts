@@ -12,7 +12,7 @@ export default () => {
     redisUrl: process.env.REDIS_URL ?? 'redis://localhost:6379',
     elasticsearchNode: process.env.ELASTICSEARCH_NODE ?? 'http://localhost:9200',
     elasticsearchIndex: process.env.ELASTICSEARCH_INDEX ?? 'documents',
-    elasticsearchIndexVersion: process.env.ELASTICSEARCH_INDEX_VERSION ?? 'v1',
+    elasticsearchIndexVersion: process.env.ELASTICSEARCH_INDEX_VERSION ?? 'v2',
     elasticsearchApiKey: process.env.ELASTICSEARCH_API_KEY ?? '',
     sessionSecret: process.env.SESSION_SECRET ?? 'dev-only-change-me-please',
     sessionTtlSeconds: Number(process.env.SESSION_TTL_SECONDS ?? 604800),

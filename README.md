@@ -67,7 +67,7 @@ cp .env.example .env
 | `REDIS_URL` | Sí | Redis local o `rediss://` para un proveedor TLS |
 | `ELASTICSEARCH_NODE` | Sí | `http://localhost:9200` o URL de Elastic Cloud |
 | `ELASTICSEARCH_INDEX` | No | Alias de búsqueda; por defecto `documents` |
-| `ELASTICSEARCH_INDEX_VERSION` | No | Versión del índice concreto (`documents-v1`); por defecto `v1` |
+| `ELASTICSEARCH_INDEX_VERSION` | No | Versión del índice concreto (`documents-v2`); por defecto `v2`. Cambiarla obliga a reindexar |
 | `ELASTICSEARCH_API_KEY` | No | Solo si el clúster usa API key |
 | `SESSION_SECRET` | Sí | Secreto de sesión/CSRF; mínimo 16 caracteres, recomendado 48 bytes |
 | `SESSION_TTL_SECONDS` | No | TTL de sesión; por defecto `604800` |
@@ -353,7 +353,7 @@ pnpm --filter @docs/backend benchmark:search
 
 Resultado y metodología: [docs/search-latency.md](docs/search-latency.md).
 
-Medición actual: p50 servidor ~18 ms, p95 ~26 ms con 29 documentos INDEXED y un índice de 1,6 MB. La lectura de metadatos se movió al índice de Elasticsearch y el usuario autenticado se cachea brevemente en Redis.
+Medición actual: p50 servidor ~16 ms, p95 ~42 ms con 42 documentos INDEXED y un índice de 5,3 MB (incluye la búsqueda por prefijo). La lectura de metadatos se movió al índice de Elasticsearch y el usuario autenticado se cachea brevemente en Redis. El detalle está en [docs/search-latency.md](docs/search-latency.md).
 
 ## 9. API principal
 
@@ -462,15 +462,31 @@ La ruta `/editor` permite **redactar** un documento en lugar de subirlo ya escri
 
 `GET /api/search` usa `multi_match` sobre título, descripción, contenido y un campo `metadata` que agrupa autor, categoría, versión y etiquetas. Además permite filtros por categoría/etiquetas/autor, paginación de 20 y `highlight` de Elasticsearch. No se usa `LIKE` ni recorridos de tabla para contenido.
 
+La consulta resuelve dos caminos en paralelo dentro de un `bool.should` con `minimum_should_match: 1`:
+
+- **Término y aproximación** (`title^3`, `description^2`, `content`, `metadata^2`): analizador `spanish` con *stemming* y `fuzziness: AUTO`, que tolera erratas (1 edición en palabras de 3–5 letras, 2 en las de más de 5) y unifica plurales y derivadas.
+- **Prefijo** (`title.prefix^3`, `description.prefix^2`, `content.prefix`, `metadata.prefix^2`): subcampo `text` con `edge_ngram` 3–20 y un analizador sin *stemming*, para que `arqui` encuentre `arquitectura` desde el tercer carácter. Los prefijos de menos de 3 caracteres no están indexados.
+
+Una consulta entre comillas (`"frase exacta"`) se resuelve solo con `match_phrase` y `slop: 0`: no aplica prefijo ni tolerancia a erratas.
+
 ### Reindexación con alias
 
-El servicio escribe y busca a través del alias `documents`; el índice concreto es `documents-v1`. Para reconstruir el índice con el mapeo actual:
+El servicio escribe y busca a través del alias `documents`; el índice concreto es `documents-v2`. Los analizadores no se pueden añadir a un índice ya creado, así que un cambio de mapeo obliga a construir uno nuevo y mover el alias:
 
 ```bash
-pnpm --filter @docs/backend es:reindex
+pnpm --filter @docs/backend es:reindex            # crea documents-{ELASTICSEARCH_INDEX_VERSION}
+pnpm --filter @docs/backend es:reindex documents-v3
 ```
 
-El comando crea un índice nuevo, reindexa los documentos, recalcula el campo `metadata` y cambia el alias de forma atómica. El índice anterior queda disponible para rollback manual. Ejecútalo en una ventana de baja escritura: un documento indexado entre la copia y el cambio de alias debe reindexarse de nuevo.
+En Docker:
+
+```bash
+docker compose --profile search-index run --rm es-reindex
+```
+
+El comando crea el índice con los `settings` y el mapeo actual, copia los documentos (`_reindex` reanaliza cada campo, que es lo que rellena los subcampos nuevos), recalcula `metadata` y cambia el alias de forma atómica. El índice anterior queda disponible para rollback manual. Si el índice de destino ya existe, el script falla: sube `ELASTICSEARCH_INDEX_VERSION` o pasa otro nombre. Ejecútalo en una ventana de baja escritura: un documento indexado entre la copia y el cambio de alias debe reindexarse de nuevo.
+
+El subcampo de prefijo multiplica los términos de `content`, así que el índice crece de forma apreciable; con `max_gram: 20` es el precio de que el autocompletado funcione sobre el texto completo y no solo sobre el título.
 
 ## 12. Diagnóstico rápido
 

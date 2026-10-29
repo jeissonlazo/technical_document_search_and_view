@@ -3,7 +3,13 @@ import { ConfigService } from '@nestjs/config';
 import { Client } from '@elastic/elasticsearch';
 import type { FacetBucket, SearchFacets, SearchHit, SearchResponse } from '@docs/shared';
 import { AppError } from '../common/app-error';
-import { DOCUMENT_INDEX_PROPERTIES } from './document-index.mapping';
+import {
+  DOCUMENT_INDEX_PROPERTIES,
+  DOCUMENT_INDEX_SETTINGS,
+  PREFIX_MIN_LENGTH,
+  PREFIX_SEARCH_FIELDS,
+  TEXT_SEARCH_FIELDS,
+} from './document-index.mapping';
 import type { SearchTiming } from './search-timing';
 
 export interface IndexableDocument {
@@ -41,7 +47,7 @@ export class SearchService implements OnModuleInit {
 
   constructor(config: ConfigService) {
     this.index = config.getOrThrow<string>('elasticsearchIndex');
-    this.indexVersion = config.get<string>('elasticsearchIndexVersion') ?? 'v1';
+    this.indexVersion = config.get<string>('elasticsearchIndexVersion') ?? 'v2';
     const apiKey = config.get<string>('elasticsearchApiKey') ?? '';
     this.client = new Client({
       node: config.getOrThrow<string>('elasticsearchNode'),
@@ -64,6 +70,15 @@ export class SearchService implements OnModuleInit {
   async ensureIndex(): Promise<void> {
     const aliasExists = await this.client.indices.existsAlias({ name: this.index });
     if (aliasExists) {
+      if (!(await this.aliasIndexHasPrefixFields())) {
+        this.logger.warn(
+          `El índice detrás del alias "${this.index}" no tiene los campos de prefijo. ` +
+            'Reindexa con el mapeo actual (pnpm --filter @docs/backend es:reindex, o el ' +
+            'servicio es-reindex de docker compose) para poder buscar por prefijo.',
+        );
+        return;
+      }
+
       await this.client.indices.putMapping({
         index: this.index,
         properties: DOCUMENT_INDEX_PROPERTIES as never,
@@ -77,6 +92,7 @@ export class SearchService implements OnModuleInit {
       await this.client.indices
         .create({
           index: concreteIndex,
+          settings: DOCUMENT_INDEX_SETTINGS as never,
           mappings: { properties: DOCUMENT_INDEX_PROPERTIES as never },
         })
         .catch((error: unknown) => {
@@ -93,6 +109,21 @@ export class SearchService implements OnModuleInit {
     }
 
     await this.client.indices.putAlias({ index: concreteIndex, name: this.index });
+  }
+
+  /**
+   * Comprueba si el índice detrás del alias se creó con el subcampo de prefijo.
+   * Un índice antiguo no puede recibir los analizadores nuevos: `putMapping` los
+   * rechaza porque `settings.analysis` no es dinámico. En ese caso hay que
+   * reconstruir el índice y mover el alias.
+   */
+  private async aliasIndexHasPrefixFields(): Promise<boolean> {
+    const mapping = (await this.client.indices.getMapping({
+      index: this.index,
+    })) as Record<string, { mappings?: { properties?: Record<string, any> } }>;
+
+    const first = Object.values(mapping)[0];
+    return Boolean(first?.mappings?.properties?.['title']?.fields?.prefix);
   }
 
   async indexDocument(document: IndexableDocument, content: string): Promise<void> {
@@ -160,22 +191,7 @@ export class SearchService implements OnModuleInit {
           : ['_score', { createdAt: 'desc' }];
 
     const phrase = extractQuotedPhrase(params.q);
-    const textQuery = phrase
-      ? {
-          multi_match: {
-            query: phrase,
-            type: 'phrase',
-            slop: 0,
-            fields: ['title^3', 'description^2', 'content', 'metadata^2'],
-          },
-        }
-      : {
-          multi_match: {
-            query: params.q,
-            fields: ['title^3', 'description^2', 'content', 'metadata^2'],
-            fuzziness: 'AUTO',
-          },
-        };
+    const should = params.q.trim() ? buildTextQueries(params.q.trim(), phrase) : [];
 
     const elasticsearchStartedAt = performance.now();
     const response = await this.client.search({
@@ -185,7 +201,9 @@ export class SearchService implements OnModuleInit {
       track_total_hits: true,
       query: {
         bool: {
-          must: params.q ? [textQuery] : [{ match_all: {} }],
+          ...(should.length
+            ? { should, minimum_should_match: 1 }
+            : { must: [{ match_all: {} }] }),
           filter: filters,
         },
       },
@@ -195,6 +213,10 @@ export class SearchService implements OnModuleInit {
         fields: {
           content: { fragment_size: 180, number_of_fragments: 3 },
           title: { number_of_fragments: 0 },
+          // Los subcampos de prefijo también resaltan: sin ellos, un resultado
+          // encontrado solo por prefijo (`arqui`) llegaría sin fragmento.
+          'content.prefix': { fragment_size: 180, number_of_fragments: 3 },
+          'title.prefix': { number_of_fragments: 0 },
         },
       },
       aggs: {
@@ -226,8 +248,8 @@ export class SearchService implements OnModuleInit {
         originalFilename: (source['originalFilename'] as string | null | undefined) ?? null,
         status: (source['status'] as SearchHit['status'] | undefined) ?? undefined,
         highlight: {
-          content: highlight['content'],
-          title: highlight['title'],
+          content: highlight['content'] ?? highlight['content.prefix'],
+          title: highlight['title'] ?? highlight['title.prefix'],
         },
       } satisfies SearchHit;
     });
@@ -303,4 +325,52 @@ function toIndexingError(error: unknown): AppError {
 function extractQuotedPhrase(query: string): string | null {
   const match = query.trim().match(/"([^"]+)"|“([^”]+)”/);
   return (match?.[1] ?? match?.[2] ?? '').trim() || null;
+}
+
+/**
+ * Cláusulas de texto de la consulta. Sin comillas se combinan dos caminos en
+ * paralelo: la búsqueda por término con fuzziness (erratas, plurales, raíces) y
+ * la búsqueda por prefijo (`arqui` → `arquitectura`). Una frase entre comillas
+ * se resuelve solo con `match_phrase`, sin prefijo ni tolerancia, para que siga
+ * siendo exacta.
+ */
+function buildTextQueries(
+  query: string,
+  phrase: string | null,
+): Array<Record<string, unknown>> {
+  if (phrase) {
+    return [
+      {
+        multi_match: {
+          query: phrase,
+          type: 'phrase',
+          slop: 0,
+          fields: [...TEXT_SEARCH_FIELDS],
+        },
+      },
+    ];
+  }
+
+  const clauses: Array<Record<string, unknown>> = [
+    {
+      multi_match: {
+        query,
+        fields: [...TEXT_SEARCH_FIELDS],
+        fuzziness: 'AUTO',
+      },
+    },
+  ];
+
+  // Por debajo del min_gram indexado ningún término puede coincidir; se evita
+  // enviar una cláusula que el motor resolvería sin resultados.
+  if (query.length >= PREFIX_MIN_LENGTH) {
+    clauses.push({
+      multi_match: {
+        query,
+        fields: [...PREFIX_SEARCH_FIELDS],
+      },
+    });
+  }
+
+  return clauses;
 }

@@ -72,7 +72,21 @@ describe('SearchService', () => {
       { term: { userId: 'user-1' } },
       { term: { status: 'INDEXED' } },
     ]);
-    expect(request.query.bool.must[0].multi_match.fuzziness).toBe('AUTO');
+    const { should } = request.query.bool;
+    expect(should).toHaveLength(2);
+    expect(should[0].multi_match.fuzziness).toBe('AUTO');
+    expect(should[1].multi_match.fields).toEqual([
+      'title.prefix^3',
+      'description.prefix^2',
+      'content.prefix',
+      'metadata.prefix^2',
+    ]);
+    expect(request.query.bool.minimum_should_match).toBe(1);
+    expect(request.query.bool.must).toBeUndefined();
+    expect(request.highlight.fields['content.prefix']).toEqual({
+      fragment_size: 180,
+      number_of_fragments: 3,
+    });
     expect(result.total).toBe(2);
     expect(result.items[0]).toMatchObject({
       id: 'doc-1',
@@ -96,10 +110,50 @@ describe('SearchService', () => {
     });
 
     const request = search.mock.calls[0][0];
-    const textQuery = request.query.bool.must[0].multi_match;
-    expect(textQuery.type).toBe('phrase');
-    expect(textQuery.query).toBe('arquitectura hexagonal');
-    expect(textQuery.fuzziness).toBeUndefined();
+    const { should } = request.query.bool;
+    expect(should).toHaveLength(1);
+    expect(should[0].multi_match.type).toBe('phrase');
+    expect(should[0].multi_match.query).toBe('arquitectura hexagonal');
+    expect(should[0].multi_match.fuzziness).toBeUndefined();
+  });
+
+  it('busca por prefijo desde el min_gram indexado', async () => {
+    await service.search('user-1', { q: 'arq', page: 1, pageSize: 20 });
+    expect(search.mock.calls[0][0].query.bool.should).toHaveLength(2);
+
+    search.mockClear();
+    await service.search('user-1', { q: 'ar', page: 1, pageSize: 20 });
+    // Por debajo de 3 caracteres ningún prefijo está indexado.
+    expect(search.mock.calls[0][0].query.bool.should).toHaveLength(1);
+  });
+
+  it('devuelve todos los documentos cuando la consulta está vacía', async () => {
+    await service.search('user-1', { q: '   ', page: 1, pageSize: 20 });
+    const request = search.mock.calls[0][0];
+    expect(request.query.bool.should).toBeUndefined();
+    expect(request.query.bool.must).toEqual([{ match_all: {} }]);
+  });
+
+  it('usa el resaltado del subcampo de prefijo cuando no hay coincidencia literal', async () => {
+    search.mockResolvedValueOnce({
+      hits: {
+        total: { value: 1 },
+        hits: [
+          {
+            _id: 'doc-2',
+            _score: 1.5,
+            _source: { title: 'Manual', status: 'INDEXED' },
+            highlight: { 'content.prefix': ['<em>arquitectura</em> hexagonal'] },
+          },
+        ],
+      },
+      aggregations: {},
+    });
+
+    const result = await service.search('user-1', { q: 'arqui', page: 1, pageSize: 20 });
+
+    expect(result.items[0].highlight.content).toEqual(['<em>arquitectura</em> hexagonal']);
+    expect(result.items[0].highlight.title).toBeUndefined();
   });
 
   it('aplica filtros de categoría, autor y etiquetas', async () => {
@@ -120,5 +174,68 @@ describe('SearchService', () => {
       { terms: { tags: ['ddd', 'api'] } },
       { term: { 'author.keyword': 'Ana' } },
     ]);
+  });
+});
+
+describe('SearchService.ensureIndex', () => {
+  const config = {
+    getOrThrow: jest.fn((key: string) => {
+      if (key === 'elasticsearchIndex') return 'documents';
+      if (key === 'elasticsearchNode') return 'http://localhost:9200';
+      return undefined;
+    }),
+    get: jest.fn((key: string) => (key === 'elasticsearchIndexVersion' ? 'v2' : undefined)),
+  };
+
+  function withIndices(mocks: Record<string, jest.Mock>) {
+    const service = new SearchService(config as never);
+    (service as unknown as { client: { indices: unknown } }).client.indices = mocks;
+    return service;
+  }
+
+  it('crea el índice con los settings de prefijo cuando no hay alias', async () => {
+    const create = jest.fn().mockResolvedValue({});
+    const service = withIndices({
+      existsAlias: jest.fn().mockResolvedValue(false),
+      exists: jest.fn().mockResolvedValue(false),
+      create,
+      putAlias: jest.fn().mockResolvedValue({}),
+    });
+
+    await service.ensureIndex();
+
+    const request = create.mock.calls[0][0];
+    expect(request.index).toBe('documents-v2');
+    expect(request.settings.analysis.analyzer.prefix_index.filter).toContain('prefix_edge_ngram');
+    expect(request.mappings.properties.title.fields.prefix.analyzer).toBe('prefix_index');
+  });
+
+  it('actualiza el mapeo cuando el índice existente ya tiene prefijos', async () => {
+    const putMapping = jest.fn().mockResolvedValue({});
+    const service = withIndices({
+      existsAlias: jest.fn().mockResolvedValue(true),
+      getMapping: jest.fn().mockResolvedValue({
+        'documents-v2': { mappings: { properties: { title: { fields: { prefix: {} } } } } },
+      }),
+      putMapping,
+    });
+
+    await service.ensureIndex();
+
+    expect(putMapping).toHaveBeenCalled();
+  });
+
+  it('avisa sin fallar si el índice existente no tiene los campos de prefijo', async () => {
+    const putMapping = jest.fn().mockResolvedValue({});
+    const service = withIndices({
+      existsAlias: jest.fn().mockResolvedValue(true),
+      getMapping: jest.fn().mockResolvedValue({
+        'documents-v1': { mappings: { properties: { title: { type: 'text' } } } },
+      }),
+      putMapping,
+    });
+
+    await expect(service.ensureIndex()).resolves.toBeUndefined();
+    expect(putMapping).not.toHaveBeenCalled();
   });
 });

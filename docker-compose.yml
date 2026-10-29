@@ -141,6 +141,21 @@ services:
         condition: service_completed_successfully
     restart: "no"
 
+  # Reconstruye el índice de búsqueda con el mapeo actual y mueve el alias.
+  # docker compose --profile search-index run --rm es-reindex
+  # Otro destino:
+  # docker compose --profile search-index run --rm es-reindex ./node_modules/.bin/tsx scripts/reindex.ts documents-v3
+  es-reindex:
+    <<: *backend
+    profiles: ["search-index"]
+    environment:
+      ELASTICSEARCH_NODE: http://elasticsearch:9200
+    command: ["./node_modules/.bin/tsx", "scripts/reindex.ts"]
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    restart: "no"
+
 volumes:
   postgres_data:
   redis_data:

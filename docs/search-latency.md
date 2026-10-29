@@ -104,6 +104,22 @@ Fecha: 2026-10-28. Corpus activo: **29 documentos INDEXED**, 3 documentos ERROR,
 
 El máximo aislado fue 533 ms por una entrada fría en la caché de autenticación. Resultado completo: [search-latency-current.json](search-latency-current.json).
 
+### Medición tras añadir la búsqueda por prefijo
+
+Fecha: 2026-10-29. Corpus: **42 documentos INDEXED**, índice `documents-v2` con **5,3 MB** (antes 1,7 MB). Mismas 6 consultas × 5 repeticiones (30 muestras).
+
+| Métrica | p50 | p95 |
+|---|---:|---:|
+| Cliente completo | 22,14 ms | 48,62 ms |
+| Autenticación | 0,46 ms | 0,72 ms |
+| Elasticsearch | 15,51 ms | 40,85 ms |
+| PostgreSQL (metadatos) | — | — |
+| Total servidor | 16,32 ms | 41,77 ms |
+
+El p50 se mantiene en el mismo orden que la medición anterior y el p95 sube por las cláusulas adicionales sobre los subcampos `*.prefix`. El máximo aislado de 553 ms vuelve a ser de autenticación (528 ms en una entrada fría de la caché): Elasticsearch no pasó de 41 ms. Resultado completo: [search-latency-prefix.json](search-latency-prefix.json).
+
+El costo real de la función es de almacenamiento: `edge_ngram` 3–20 sobre `content` multiplica los términos indexados y llevó el índice de 1,7 MB a 5,3 MB (×3,1). Si el corpus crece, la palanca es bajar `max_gram` o limitar el subcampo a `title` y `description`. Los números de este apartado no son comparables uno a uno con las mediciones anteriores: cambió el corpus (29 → 42 documentos).
+
 ## 5. Funciones preservadas
 
 - Filtros por categoría, autor y etiquetas.
@@ -113,10 +129,11 @@ El máximo aislado fue 533 ms por una entrada fría en la caché de autenticaci�
 - Paginación.
 - Metadatos de los hits (`mime`, `size`, `createdAt`, `originalFilename`, `status`).
 - Búsqueda de metadatos mediante el campo `metadata`.
+- Búsqueda por prefijo (`arqui` → `arquitectura`) sobre los subcampos `*.prefix`.
 
 ## 6. Límites de la medición
 
-- El dataset local tiene 29 documentos INDEXED y 1,6 MB; los percentiles no representan un corpus de producción.
+- El dataset local tiene 42 documentos INDEXED y 5,3 MB (29 y 1,6 MB en las mediciones anteriores); los percentiles no representan un corpus de producción.
 - La segunda medición usó 48 muestras, las mismas consultas y repeticiones que la inicial; la medición de cierre usó 30 muestras sobre el corpus actual.
 - El benchmark usa la cuenta semilla y consultas representativas, no una mezcla completa de filtros y páginas.
 - No se implementó caché de resultados: con ~18 ms p50 no aporta valor y añadiría invalidación compleja.

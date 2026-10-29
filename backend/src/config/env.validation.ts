@@ -9,7 +9,7 @@ const envSchema = z.object({
   REDIS_URL: z.string().default('redis://localhost:6379'),
   ELASTICSEARCH_NODE: z.string().default('http://localhost:9200'),
   ELASTICSEARCH_INDEX: z.string().default('documents'),
-  ELASTICSEARCH_INDEX_VERSION: z.string().default('v1'),
+  ELASTICSEARCH_INDEX_VERSION: z.string().default('v2'),
   ELASTICSEARCH_API_KEY: z.string().optional().default(''),
   SESSION_SECRET: z.string().min(16).default('dev-only-change-me-please'),
   SESSION_TTL_SECONDS: z.coerce.number().default(604800),
